@@ -4,7 +4,7 @@ import LandingPage from "@/components/LandingPage";
 const vagly = localFont({
   src: "./fonts/VaglyDemoFont-Regular.otf",
   display: "swap",
-  variable: "--font-vagly",
+  variable: "--font-wordmark",
 });
 
 const bramonia = localFont({
@@ -14,5 +14,10 @@ const bramonia = localFont({
 });
 
 export default function Home() {
-  return <LandingPage fontClassName={`${vagly.variable} ${bramonia.variable}`} />;
+  return (
+    <LandingPage
+      wordmarkFontClassName={vagly.variable}
+      greetingFontClassName={bramonia.variable}
+    />
+  );
 }

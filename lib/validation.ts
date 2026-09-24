@@ -79,10 +79,11 @@ export function parseCampaign(raw: unknown): Campaign {
   return parsed.data as Campaign;
 }
 export function parseSettings(raw: unknown) {
+  const stored = raw && typeof raw === "object" && "provider" in raw && raw.provider === "demo" ? { ...raw, provider: "ollama" } : raw;
   const schema = z.object({
     difficulty: z.enum(["Standard", "Challenging"]),
     turnDays: z.union([z.literal(1), z.literal(7), z.literal(30)]),
-    provider: z.enum(["demo", "openai", "openrouter"]),
+    provider: z.enum(["ollama", "openai", "openrouter"]),
     model: z.string().max(120),
     temperature: finite.min(0).max(1.5),
     maxTokens: z.number().int().min(512).max(8192),
@@ -96,7 +97,9 @@ export function parseSettings(raw: unknown) {
     sound: z.boolean(),
     volume: finite.min(0).max(100),
     labels: z.boolean(),
+    texture: z.boolean().default(true),
+    highlights: z.boolean().default(true),
   });
-  const parsed = schema.safeParse(raw);
+  const parsed = schema.safeParse(stored);
   return parsed.success ? parsed.data : defaults;
 }

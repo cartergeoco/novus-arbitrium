@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Choice } from "./Settings";
 import Flag from "./Flag";
+import { ColorPicker } from "./ColorPicker";
 import { makeFlag, type Nation, type FlagSpec } from "@/lib/game";
 import { Shuffle, Check } from "@phosphor-icons/react";
 export default function IdentityEditor({
@@ -94,32 +95,31 @@ export default function IdentityEditor({
         </div>
         <div className="color-row">
           {flag.colors.map((c, i) => (
-            <label key={i}>
-              Color {i + 1}
-              <input
-                aria-label={`Flag color ${i + 1}`}
-                type="color"
+            <div className="color-field" key={i}>
+              <span>Color {i + 1}</span>
+              <ColorPicker
+                label={`Flag color ${i + 1}`}
                 value={c}
-                onChange={(e) => {
+                onChange={(next) => {
                   setFlag({
                     ...flag,
                     colors: flag.colors.map((x, j) =>
-                      i === j ? e.target.value : x,
+                      i === j ? next : x,
                     ),
                   });
                   setCustom(true);
                 }}
               />
-            </label>
+            </div>
           ))}
-          <label>
-            Map color
-            <input
-              type="color"
+          <div className="color-field">
+            <span>Map color</span>
+            <ColorPicker
+              label="Map color"
               value={color}
-              onChange={(e) => setColor(e.target.value)}
+              onChange={setColor}
             />
-          </label>
+          </div>
         </div>
         <button
           className="primary-button"

@@ -10,6 +10,14 @@ test("an exported campaign round-trips through validation", () => {
   const c = createCampaign(world, "Export test", "USA");
   assert.deepEqual(parseCampaign(JSON.parse(JSON.stringify(c))), c);
 });
+test("older preferences gain visual defaults without resetting existing choices", () => {
+  const legacy = { ...defaults, fontSize: 19, motion: true, transparency: false } as Record<string, unknown>;
+  delete legacy.texture;
+  delete legacy.highlights;
+  assert.deepEqual(parseSettings(legacy), { ...defaults, fontSize: 19, motion: true, transparency: false });
+  assert.equal(parseSettings({ ...legacy, texture: false, highlights: false }).texture, false);
+  assert.equal(parseSettings({ ...legacy, texture: false, highlights: false }).highlights, false);
+});
 test("corrupt flags, missing identities and invalid settings are rejected", () => {
   const c = createCampaign(world, "Corrupt test", "USA");
   c.nations.USA.flag.colors = ["https://example.com"];

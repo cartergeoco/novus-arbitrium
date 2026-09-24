@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import {
   BookOpenText,
-  ClockCounterClockwise,
+  Stack,
   ArrowRight,
   DownloadSimple,
   GearSix,
@@ -16,10 +16,22 @@ import {
   Trash,
   UploadSimple,
   UserCircle,
+  MagnifyingGlass,
+  X,
+  ArrowUp,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import Flag from "@/components/Flag";
-import SettingsPanel from "@/components/Settings";
+import { AsciiBackground } from "@/components/AsciiBackground";
+import SettingsPanel, { Choice } from "@/components/Settings";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { IconButton } from "@/components/IconButton";
+import { SurfaceDetails } from "@/components/SurfaceDetails";
+import { GlowWordmark } from "@/components/GlowWordmark";
+import { KeyHint } from "@/components/KeyHint";
+import { useSettings } from "@/hooks/use-settings";
+import { useAmbientState } from "@/hooks/use-ambient-state";
+import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,13 +49,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  defaults,
   formatDate,
   type Campaign,
-  type Settings as SettingsType,
 } from "@/lib/game";
 import { campaigns, deleteCampaign, saveCampaign } from "@/lib/storage";
-import { parseCampaign, parseSettings } from "@/lib/validation";
+import { parseCampaign } from "@/lib/validation";
 
 const Game = dynamic(() => import("@/components/Game"), { ssr: false });
 
@@ -71,14 +81,15 @@ const MENU_ITEMS: MenuItem[] = [
   { label: "Home", href: "#home", icon: House },
   { label: "New", href: "#new", icon: Plus },
   {
-    label: "Recent",
-    href: "#recent",
-    icon: ClockCounterClockwise,
+    label: "Campaigns",
+    href: "#campaigns",
+    icon: Stack,
   },
   {
     label: "Library",
     href: "#library",
     icon: BookOpenText,
+    disabled: true,
   },
   {
     label: "Explore",
@@ -96,10 +107,11 @@ const MENU_ITEMS: MenuItem[] = [
 ];
 
 type LandingPageProps = {
-  fontClassName: string;
+  wordmarkFontClassName: string;
+  greetingFontClassName: string;
 };
 
-export default function LandingPage({ fontClassName }: LandingPageProps) {
+export default function LandingPage({ wordmarkFontClassName, greetingFontClassName }: LandingPageProps) {
   const [greetingIndex, setGreetingIndex] = useState(0);
   const [visibleText, setVisibleText] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -108,6 +120,7 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
   const [openCampaign, setOpenCampaign] = useState<Campaign | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [commandsOpen, setCommandsOpen] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [savedCampaigns, setSavedCampaigns] = useState<Campaign[]>([]);
   const [savesLoading, setSavesLoading] = useState(true);
@@ -116,31 +129,22 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
   const [query, setQuery] = useState("");
   const [deleteId, setDeleteId] = useState("");
   const importInput = useRef<HTMLInputElement>(null);
-  const [settings, setSettings] = useState<SettingsType>(() => {
-    if (typeof window === "undefined") return defaults;
-
-    try {
-      const saved = JSON.parse(
-        window.localStorage.getItem("novus-settings") || "null",
-      );
-      return saved ? parseSettings(saved) : defaults;
-    } catch {
-      return defaults;
-    }
-  });
+  const menuToggle = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const [settings, setSettings] = useSettings();
+  const { hidden, reducedMotion } = useAmbientState();
+  const [sort, setSort] = useState("recent");
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
-    const reduceMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-
-    if (reduceMotion) {
+    if (reducedMotion || settings.motion) {
       const reducedMotionTimer = window.setTimeout(
         () => setVisibleText(GREETINGS[0]),
         0,
       );
       return () => window.clearTimeout(reducedMotionTimer);
     }
+    if (hidden || menuOpen || settingsOpen || profileOpen || commandsOpen || activeSection !== "#home" || openCampaign) return;
 
     const greeting = GREETINGS[greetingIndex];
     let delay = deleting ? 65 : 110;
@@ -171,7 +175,7 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
     }, delay);
 
     return () => window.clearTimeout(timer);
-  }, [deleting, greetingIndex, visibleText]);
+  }, [deleting, greetingIndex, visibleText, settings.motion, menuOpen, settingsOpen, profileOpen, commandsOpen, hidden, reducedMotion, activeSection, openCampaign]);
 
   const refreshCampaigns = useCallback(async () => {
     try {
@@ -186,7 +190,7 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
 
   useEffect(() => {
     const updateSection = () => {
-      const hash = window.location.hash;
+      const hash = window.location.hash === "#recent" || window.location.hash === "#library" ? "#campaigns" : window.location.hash;
       setActiveSection(MENU_ITEMS.some((item) => item.href === hash && !item.disabled) ? hash : "#home");
       setOpenCampaign(null);
       void refreshCampaigns();
@@ -200,19 +204,23 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
     };
   }, [refreshCampaigns]);
 
-  const navigate = (section: string) => {
+  const navigate = useCallback((section: string) => {
     window.history.pushState(null, "", section);
     setActiveSection(section);
     setOpenCampaign(null);
     setMenuOpen(false);
+    setCommandsOpen(false);
     setNotice("");
-    if (section === "#recent" || section === "#library") {
+    window.scrollTo({ top: 0, behavior: "instant" });
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(".page-content")?.focus({ preventScroll: true }));
+    if (section === "#campaigns" || section === "#recent" || section === "#library") {
       setSavesLoading(true);
       void refreshCampaigns();
     }
-  };
+  }, [refreshCampaigns]);
 
   async function importCampaign(file: File) {
+    setImporting(true);
     try {
       if (file.size > 30000000) throw Error("Campaign files must be under 30 MB.");
       const imported = parseCampaign(JSON.parse(await file.text()));
@@ -223,9 +231,11 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
       };
       await saveCampaign(copy);
       await refreshCampaigns();
-      setNotice(`Imported “${copy.name}” into your library.`);
+      setNotice(`Imported “${copy.name}” into your campaigns.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not import this campaign.");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -235,6 +245,7 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
     link.href = url;
     link.download = `novus-${campaign.name.replace(/[^a-z0-9]/gi, "-").slice(0, 50)}.json`;
     link.click();
+    setNotice(`Exported “${campaign.name}”. Keep the file somewhere safe.`);
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
@@ -242,57 +253,79 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
     if (!menuOpen) return;
 
     const previousOverflow = document.body.style.overflow;
+    const toggleButton = menuToggle.current;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Tab") {
+        const links = Array.from(document.querySelectorAll<HTMLElement>("#site-menu a:not(.disabled), #site-menu button"));
+        const first = links[0];
+        const last = links.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); menuToggle.current?.focus(); }
+        else if (event.shiftKey && document.activeElement === menuToggle.current) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); menuToggle.current?.focus(); }
+        else if (!event.shiftKey && document.activeElement === menuToggle.current) { event.preventDefault(); first?.focus(); }
+      }
     };
 
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", closeOnEscape);
+    const frame = requestAnimationFrame(() => document.querySelector<HTMLElement>("#site-menu a[aria-current=page]")?.focus());
 
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", closeOnEscape);
+      cancelAnimationFrame(frame);
+      toggleButton?.focus({ preventScroll: true });
     };
   }, [menuOpen]);
 
   useEffect(() => {
-    document.documentElement.style.fontSize = `${settings.fontSize}px`;
-    document.documentElement.dataset.contrast = String(settings.contrast);
-    document.documentElement.dataset.motion = String(settings.motion);
-    document.documentElement.dataset.transparency = String(
-      settings.transparency,
-    );
-    try {
-      window.localStorage.setItem(
-        "novus-settings",
-        JSON.stringify(settings),
-      );
-    } catch {}
-  }, [settings]);
+    const shortcuts = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.repeat) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      if (event.ctrlKey && event.code === "Space") {
+        event.preventDefault(); setMenuOpen(false); setCommandsOpen(true);
+      }
+      if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !menuOpen && activeSection === "#campaigns" && !openCampaign && !(event.target as HTMLElement).closest("input, textarea, [contenteditable=true]")) {
+        event.preventDefault(); searchInput.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", shortcuts);
+    return () => window.removeEventListener("keydown", shortcuts);
+  }, [activeSection, menuOpen, openCampaign]);
 
   const showingGame = activeSection === "#new" || !!openCampaign;
-  const isCollection = activeSection === "#recent" || activeSection === "#library";
-  const visibleCampaigns = activeSection === "#recent"
-    ? savedCampaigns.slice(0, 5)
-    : savedCampaigns.filter((campaign) => {
-        const nation = campaign.nations[campaign.player]?.name || "";
-        return `${campaign.name} ${nation}`.toLowerCase().includes(query.trim().toLowerCase());
-      });
+  const isCollection = activeSection === "#campaigns";
+  const visibleCampaigns = savedCampaigns.filter((campaign) => {
+    const nation = campaign.nations[campaign.player]?.name || "";
+    return `${campaign.name} ${nation}`.toLowerCase().includes(query.trim().toLowerCase());
+  }).sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) : sort === "turns" ? b.turn - a.turn : b.updatedAt.localeCompare(a.updatedAt));
 
   return (
     <main
-      className={`${fontClassName} landing-page ${activeSection === "#about" ? "landing-page-about" : ""} ${showingGame ? "landing-page-game" : ""} ${isCollection ? "landing-page-collection" : ""}`}
+      className={`landing-page ${activeSection === "#about" ? "landing-page-about" : ""} ${showingGame ? "landing-page-game" : ""} ${isCollection ? "landing-page-collection" : ""}`}
       data-menu-open={menuOpen}
+      data-ambient-paused={hidden || menuOpen || settingsOpen || profileOpen || commandsOpen}
     >
+      <SurfaceDetails disabled={!settings.highlights || settings.motion || settings.contrast} />
+      <div className="film-grain" aria-hidden="true" />
+      <a className="skip-link" href="#page-content" onClick={(event) => { event.preventDefault(); document.getElementById("page-content")?.focus(); }}>Skip to content</a>
+      <AsciiBackground
+        section={activeSection}
+        reading={activeSection === "#about" || isCollection}
+        disabled={!settings.transparency || settings.contrast}
+        paused={showingGame || menuOpen || settingsOpen || profileOpen || commandsOpen}
+        reduceMotion={settings.motion}
+      />
       <header className="landing-header">
         <div className="landing-header-side landing-header-left">
-          <button
+          <IconButton
+            ref={menuToggle}
             className={`landing-icon-button landing-menu-toggle ${menuOpen ? "menu-toggle-open" : ""}`}
             type="button"
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             aria-expanded={menuOpen}
             aria-controls="site-menu"
-            title="Menu"
             onClick={() => setMenuOpen((open) => !open)}
           >
             <span className="menu-toggle-icon" aria-hidden="true">
@@ -300,30 +333,28 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
               <span />
               <span />
             </span>
-          </button>
+          </IconButton>
         </div>
 
-        <h1 className="landing-wordmark">Novus Arbitrium</h1>
+        <h1 className={`${wordmarkFontClassName} landing-wordmark`} inert={menuOpen}><GlowWordmark onHome={() => navigate("#home")} disabled={settings.motion || settings.contrast || reducedMotion || menuOpen} /></h1>
 
-        <div className="landing-header-side landing-header-actions">
-          <button
-            className="landing-icon-button"
-            type="button"
-            aria-label="Open user profile"
-            title="User profile"
-            onClick={() => setProfileOpen(true)}
-          >
-            <UserCircle weight="fill" />
-          </button>
-          <button
+        <div className="landing-header-side landing-header-actions" inert={menuOpen}>
+          <Popover open={profileOpen} onOpenChange={(open) => { setProfileOpen(open); if (open) void refreshCampaigns(); }}>
+            <PopoverTrigger asChild>
+              <button className="landing-icon-button" type="button" aria-label="Account"><UserCircle weight="fill" /></button>
+            </PopoverTrigger>
+            <PopoverContent className="account-menu" align="end" sideOffset={12} collisionPadding={16} aria-labelledby="account-title">
+              <div className="account-heading"><Image src="/novus-logo.svg" width={36} height={36} alt="" /><div><h2 id="account-title">Local player</h2><p>{savedCampaigns.length} {savedCampaigns.length === 1 ? "saved campaign" : "saved campaigns"}</p></div></div>
+            </PopoverContent>
+          </Popover>
+          <IconButton
             className="landing-icon-button"
             type="button"
             aria-label="Open settings"
-            title="Settings"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => { setProfileOpen(false); setSettingsOpen(true); }}
           >
             <GearSix weight="fill" />
-          </button>
+          </IconButton>
         </div>
       </header>
 
@@ -331,7 +362,8 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
         className="menu-backdrop"
         type="button"
         aria-label="Close menu"
-        tabIndex={menuOpen ? 0 : -1}
+        aria-hidden={!menuOpen}
+        tabIndex={-1}
         onClick={() => setMenuOpen(false)}
       />
 
@@ -340,10 +372,11 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
         className="site-menu"
         aria-label="Page menu"
         aria-hidden={!menuOpen}
+        inert={!menuOpen}
       >
         <Image
           className="site-menu-logo"
-          src="/novus-logo.png"
+          src="/novus-logo.svg"
           width={54}
           height={54}
           alt="Novus Arbitrium logo"
@@ -384,8 +417,10 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
             },
           )}
         </nav>
+        <div className="menu-footer"><button type="button" onClick={() => { setMenuOpen(false); setCommandsOpen(true); }}><MagnifyingGlass /> Quick navigation <span className="key-chord"><kbd>Ctrl</kbd><kbd>Space</kbd></span></button></div>
       </aside>
 
+      <div id="page-content" className="page-content" key={openCampaign?.id || activeSection} tabIndex={-1} inert={menuOpen}>
       {showingGame ? (
         <div className="landing-game-surface">
           <Game
@@ -393,8 +428,10 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
             launchMode={openCampaign ? "library" : "new"}
             initialCampaign={openCampaign || undefined}
             embedded
+            sessionApiKey={apiKey}
+            onSessionApiKeyChange={setApiKey}
             onExit={() => {
-              if (activeSection === "#new") navigate("#library");
+              if (activeSection === "#new") navigate("#campaigns");
               else {
                 setOpenCampaign(null);
                 void refreshCampaigns();
@@ -403,86 +440,75 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
           />
         </div>
       ) : isCollection ? (
-        <section className="collection-page" aria-labelledby="collection-title">
+        <section className="collection-page" aria-labelledby="collection-title" data-ascii-content>
           <div className="collection-heading">
             <div>
-              <p className="about-eyebrow">YOUR WORLDS / {activeSection === "#recent" ? "RECENT" : "LIBRARY"}</p>
-              <h2 id="collection-title">{activeSection === "#recent" ? "Recent timelines." : "Your library."}</h2>
-              <p className="collection-intro">
-                {activeSection === "#recent"
-                  ? "Pick up where you left off. Your latest five campaigns appear here."
-                  : "Every saved world, ready when you are."}
-              </p>
+              <h2 id="collection-title" className={greetingFontClassName}>Campaigns</h2>
             </div>
-            <button className="collection-primary" type="button" onClick={() => navigate("#new")}>
-              <Plus weight="bold" /> New campaign
-            </button>
           </div>
 
-          {activeSection === "#library" && (
-            <div className="collection-tools">
+          <div className="collection-tools">
               <label className="collection-search">
+                <MagnifyingGlass aria-hidden="true" />
                 <span className="sr-only">Search campaigns</span>
                 <input
+                  ref={searchInput}
+                  aria-label="Search campaigns"
                   type="search"
                   placeholder="Search campaigns or nations"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
+                {query ? <button type="button" aria-label="Clear campaign search" onClick={() => { setQuery(""); searchInput.current?.focus(); }}><X /></button> : <kbd aria-label="slash">/</kbd>}
               </label>
-              <button type="button" onClick={() => importInput.current?.click()}>
-                <UploadSimple /> Import save
+              <Choice className="collection-sort" label="Sort campaigns" value={sort} onChange={setSort} options={[{ value: "recent", label: "Last played" }, { value: "name", label: "Name A–Z" }, { value: "turns", label: "Most turns" }]} />
+              <button className="outline-button collection-import" type="button" disabled={importing} onClick={() => importInput.current?.click()}>
+                <UploadSimple /> {importing ? "Importing…" : "Import save"}
               </button>
             </div>
-          )}
 
-          {notice && <p className="collection-notice" role="status">{notice}</p>}
+          {notice && <div className="collection-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X /></button></div>}
           {saveError && <p className="collection-notice collection-error" role="alert">{saveError}</p>}
           <div className="collection-list" aria-live="polite">
             {savesLoading ? (
-              <p className="collection-empty">Loading saved campaigns…</p>
+              <div className="collection-skeleton" role="status" aria-label="Loading saved campaigns"><span /><span /><span /></div>
             ) : visibleCampaigns.length ? (
               visibleCampaigns.map((campaign, index) => {
                 const nation = campaign.nations[campaign.player];
                 return (
-                  <article className="collection-card" key={campaign.id}>
-                    <span className="collection-index">{String(index + 1).padStart(2, "0")}</span>
+                  <article className="collection-card" key={campaign.id} style={{ "--item-index": Math.min(index, 6) } as CSSProperties}>
+                    <span className="collection-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
                     <span className="collection-flag">
                       {nation?.flag && <Flag spec={nation.flag} iso={nation.iso} original={nation.original} />}
                     </span>
                     <div className="collection-card-main">
                       <h3>{campaign.name}</h3>
-                      <p>{nation?.name || "Dissolved nation"} <span>·</span> {formatDate(campaign.date)} <span>·</span> Turn {campaign.turn}</p>
-                      <small>LAST PLAYED {new Date(campaign.updatedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }).toUpperCase()}</small>
+                      <p>{nation?.name || "Dissolved nation"} <span>·</span> Turn {campaign.turn}</p>
+                      <small>{formatDate(campaign.date)} <span aria-hidden="true">·</span> Played {new Date(campaign.updatedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</small>
                     </div>
                     <div className="collection-card-actions">
                       <button className="collection-continue" type="button" onClick={() => setOpenCampaign(campaign)}>
-                        Continue <ArrowRight />
+                        Continue <ArrowRight aria-hidden="true" />
                       </button>
-                      <button className="collection-icon" type="button" aria-label={`Export ${campaign.name}`} title="Export campaign" onClick={() => exportCampaign(campaign)}><DownloadSimple /></button>
-                      <button className="collection-icon" type="button" aria-label={`Delete ${campaign.name}`} title="Delete campaign" onClick={() => setDeleteId(campaign.id)}><Trash /></button>
+                      <IconButton className="collection-icon" type="button" aria-label={`Export ${campaign.name}`} onClick={() => exportCampaign(campaign)}><DownloadSimple /></IconButton>
+                      <IconButton className="collection-icon" type="button" aria-label={`Delete ${campaign.name}`} onClick={() => setDeleteId(campaign.id)}><Trash /></IconButton>
                     </div>
                   </article>
                 );
               })
             ) : (
               <div className="collection-empty">
-                <BookOpenText aria-hidden="true" />
-                <h3>{query && activeSection === "#library" ? "No matching campaigns" : "No saved campaigns yet"}</h3>
-                <p>{query && activeSection === "#library" ? "Try another name or nation." : "Begin a new timeline and it will appear here automatically."}</p>
-                {!query && <button type="button" onClick={() => navigate("#new")}>Create a campaign <ArrowRight /></button>}
+                <Stack aria-hidden="true" />
+                <h3>{query ? "No matching campaigns" : "No saved campaigns yet"}</h3>
+                <p>{query ? "Try another name or nation." : "Your next timeline starts here."}</p>
+                {!!query && <button type="button" onClick={() => { setQuery(""); searchInput.current?.focus(); }}>Clear search <X /></button>}
               </div>
             )}
           </div>
-          {activeSection === "#recent" && savedCampaigns.length > 5 && (
-            <button className="collection-view-all" type="button" onClick={() => navigate("#library")}>View all {savedCampaigns.length} campaigns <ArrowRight /></button>
-          )}
-          <p className="collection-footnote">Campaigns are stored on this device.</p>
         </section>
       ) : activeSection === "#about" ? (
-        <section id="about" className="about-page" aria-labelledby="about-title">
-          <p className="about-eyebrow">ABOUT THE PROJECT</p>
-          <h2 id="about-title">A world shaped by every decision.</h2>
+        <section id="about" className="about-page" aria-labelledby="about-title" data-ascii-content>
+          <h2 id="about-title" className={greetingFontClassName}>A world shaped by every decision.</h2>
           <p className="about-intro">
             Novus Arbitrium is an alternate-history strategy experience created
             by Carter Geoco. Lead a nation, make consequential choices, and
@@ -511,9 +537,8 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
               <span>03</span>
               <h3>Getting started</h3>
               <p>
-                Choose New to select a nation and begin a timeline. Use Recent
-                for your latest campaigns or Library to browse every saved
-                world.
+                Choose New to select a nation and begin a timeline. Use Campaigns
+                to browse every saved world.
               </p>
             </article>
             <article>
@@ -526,20 +551,38 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
               </p>
             </article>
           </div>
+          <button className="back-to-top" type="button" onClick={() => { document.querySelector<HTMLElement>(".page-content")?.focus({ preventScroll: true }); window.scrollTo({ top: 0, behavior: settings.motion || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" }); }}>Back to top <ArrowUp /></button>
         </section>
       ) : (
         <section id="home" className="greeting-stage" aria-label="Greetings">
-          <p className="greeting-text" aria-hidden="true">
+          <p className={`${greetingFontClassName} greeting-text`} aria-hidden="true" data-ascii-content>
             {visibleText}
             <span className="typing-cursor" />
           </p>
-          <span className="sr-only">{GREETINGS[greetingIndex]}</span>
+          <span className="sr-only">Hello. Welcome to Novus Arbitrium.</span>
+          <div className="home-invitation">
+            <span>A world of consequence</span>
+            <button
+              type="button"
+              className="outline-button begin-button"
+              onClick={() => savedCampaigns[0] ? setOpenCampaign(savedCampaigns[0]) : navigate("#new")}
+            >
+              <span>{savedCampaigns[0] ? "Continue your timeline" : "Begin a timeline"}</span>
+              <ArrowRight aria-hidden="true" />
+            </button>
+          </div>
         </section>
+      )}
+      </div>
+      {!showingGame && (
+        <footer className="home-footer">
+          <i className="tiny-seal" aria-hidden="true" />
+        </footer>
       )}
 
       <SettingsPanel
         open={settingsOpen}
-        onOpenChange={setSettingsOpen}
+        onOpenChange={(open) => { setSettingsOpen(open); if (open) setProfileOpen(false); }}
         settings={settings}
         onChange={setSettings}
         apiKey={apiKey}
@@ -547,33 +590,23 @@ export default function LandingPage({ fontClassName }: LandingPageProps) {
         tokens={0}
       />
 
-      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
-        <DialogContent className="landing-account-dialog">
-          <div className="account-logo">
-            <Image
-              src="/novus-logo.png"
-              width={64}
-              height={64}
-              alt=""
-              aria-hidden="true"
-            />
-          </div>
-          <DialogTitle>Local player</DialogTitle>
-          <DialogDescription>
-            Your timelines live on this device.
-          </DialogDescription>
-          <p className="account-summary">
-            {savedCampaigns.length} saved{" "}
-            {savedCampaigns.length === 1 ? "campaign" : "campaigns"}. No separate
-            account is needed.
-          </p>
-          <button
-            className="account-close-button"
-            type="button"
-            onClick={() => setProfileOpen(false)}
-          >
-            Done
-          </button>
+      <Dialog open={commandsOpen} onOpenChange={setCommandsOpen}>
+        <DialogContent className="quick-nav-dialog">
+          <DialogTitle className="sr-only">Quick navigation</DialogTitle>
+          <DialogDescription className="sr-only">Search pages and saved campaigns. Press Ctrl and Space to open, use arrow keys to choose, and Enter to open.</DialogDescription>
+          <Command>
+            <CommandInput placeholder="Where would you like to go?" aria-label="Search pages and campaigns" />
+            <CommandList>
+              <CommandEmpty>No matches. Try a page or campaign name.</CommandEmpty>
+              <CommandGroup heading="PAGES">
+                {MENU_ITEMS.filter((item) => !item.disabled).map(({ label, href, icon: Icon }) => <CommandItem key={href} value={label} onSelect={() => navigate(href)}><Icon />{label}<ArrowRight className="command-arrow" /></CommandItem>)}
+                <CommandItem onSelect={() => { setCommandsOpen(false); setProfileOpen(false); requestAnimationFrame(() => setSettingsOpen(true)); }}><GearSix />Settings</CommandItem>
+                <CommandItem onSelect={() => { setCommandsOpen(false); requestAnimationFrame(() => setProfileOpen(true)); }}><UserCircle />Local player</CommandItem>
+              </CommandGroup>
+              {!!savedCampaigns.length && <CommandGroup heading="YOUR TIMELINES">{savedCampaigns.slice(0, 8).map((campaign) => <CommandItem key={campaign.id} value={`${campaign.id} ${campaign.name} ${campaign.nations[campaign.player]?.name || ""}`} onSelect={() => { setCommandsOpen(false); setOpenCampaign(campaign); }}><BookOpenText /><span>{campaign.name}</span><small>Turn {campaign.turn}</small></CommandItem>)}</CommandGroup>}
+            </CommandList>
+          </Command>
+          <div className="command-footer"><span><KeyHint name="up" label="Up" /><KeyHint name="down" label="Down" /> to move</span><span><KeyHint name="enter" label="Enter" /> to open</span><span><KeyHint name="esc" label="Escape" /> to close</span></div>
         </DialogContent>
       </Dialog>
       <input

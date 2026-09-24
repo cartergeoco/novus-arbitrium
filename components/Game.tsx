@@ -1,5 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSettings } from "@/hooks/use-settings";
+import { IconButton } from "@/components/IconButton";
 import dynamic from "next/dynamic";
 import type { FeatureCollection } from "geojson";
 import {
@@ -57,24 +59,22 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { toast, Toaster } from "sonner";
 import Settings, { Choice } from "./Settings";
+import { KeyHint } from "./KeyHint";
 import Flag from "./Flag";
 import IdentityEditor from "./IdentityEditor";
 import { Starfield } from "./Starfield";
 import {
-  defaults,
   createCampaign,
   applyTurn,
-  demoTurn,
   compactContext,
   transferTerritory,
   resolveStatus,
   formatDate,
   number,
   type Campaign,
-  type Settings as SettingsType,
 } from "@/lib/game";
 import { campaigns, saveCampaign, deleteCampaign } from "@/lib/storage";
-import { parseCampaign, parseSettings } from "@/lib/validation";
+import { parseCampaign } from "@/lib/validation";
 const WorldMap = dynamic(() => import("./WorldMap"), {
   ssr: false,
   loading: () => <div className="map-loading">Charting the world…</div>,
@@ -100,11 +100,8 @@ const SUGGESTIONS = [
   },
 ];
 function useRegions(id: string) {
-  const [regions, setRegions] = useState<FeatureCollection | null>(null),
-    [failed, setFailed] = useState(false);
+  const [result, setResult] = useState<{ id: string; regions: FeatureCollection | null; failed: boolean } | null>(null);
   useEffect(() => {
-    setRegions(null);
-    setFailed(false);
     if (!id || id.startsWith("NEW-")) return;
     const controller = new AbortController();
     fetch(`/data/regions/${id}.json`, { signal: controller.signal })
@@ -112,13 +109,13 @@ function useRegions(id: string) {
         if (!r.ok) throw Error();
         return r.json() as Promise<FeatureCollection>;
       })
-      .then(setRegions)
+      .then((regions) => { if (!controller.signal.aborted) setResult({ id, regions, failed: false }); })
       .catch((e) => {
-        if (e.name !== "AbortError") setFailed(true);
+        if (e.name !== "AbortError") setResult({ id, regions: null, failed: true });
       });
     return () => controller.abort();
   }, [id]);
-  return { regions, failed };
+  return result?.id === id ? result : { regions: null, failed: false };
 }
 
 export type GameLaunchMode = "new" | "recent" | "library";
@@ -128,6 +125,8 @@ type GameProps = {
   onExit?: () => void;
   initialCampaign?: Campaign;
   embedded?: boolean;
+  sessionApiKey?: string;
+  onSessionApiKeyChange?: (key: string) => void;
 };
 
 export default function Game({
@@ -135,7 +134,13 @@ export default function Game({
   onExit,
   initialCampaign,
   embedded = false,
+  sessionApiKey,
+  onSessionApiKeyChange,
 }: GameProps = {}) {
+  const [settings, setSettings] = useSettings();
+  const [localApiKey, setLocalApiKey] = useState("");
+  const apiKey = sessionApiKey ?? localApiKey;
+  const setApiKey = onSessionApiKeyChange ?? setLocalApiKey;
   const [world, setWorld] = useState<FeatureCollection | null>(null),
     [worldError, setWorldError] = useState(""),
     [saves, setSaves] = useState<Campaign[]>([]),
@@ -143,9 +148,7 @@ export default function Game({
     [campaign, setCampaign] = useState<Campaign | null>(initialCampaign || null),
     [creating, setCreating] = useState(launchMode === "new"),
     [selected, setSelected] = useState("USA"),
-    [settings, setSettings] = useState<SettingsType>(defaults),
     [settingsOpen, setSettingsOpen] = useState(false),
-    [apiKey, setApiKey] = useState(""),
     [profileOpen, setProfileOpen] = useState(false),
     [name, setName] = useState("A new world order"),
     [query, setQuery] = useState(""),
@@ -190,34 +193,17 @@ export default function Game({
         );
       setLoading(false);
     });
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem("novus-settings") || "null",
-      );
-      if (saved) setSettings(parseSettings(saved));
-    } catch {}
     return () => {
       live = false;
       requestRef.current?.abort();
     };
   }, []);
-  useEffect(() => {
-    document.documentElement.style.fontSize = settings.fontSize + "px";
-    document.documentElement.dataset.contrast = String(settings.contrast);
-    document.documentElement.dataset.motion = String(settings.motion);
-    document.documentElement.dataset.transparency = String(
-      settings.transparency,
-    );
-    try {
-      localStorage.setItem("novus-settings", JSON.stringify(settings));
-    } catch {}
-  }, [settings]);
   const preview = useMemo(
     () => (world ? createCampaign(world, "Preview", "USA") : null),
     [world],
   );
   const current = campaign || preview;
-  const nations = current?.nations || {};
+  const nations = useMemo(() => current?.nations || {}, [current?.nations]);
   const nation = nations[selected] || nations[current?.player || "USA"];
   const player = campaign?.nations[campaign.player];
   const playerRegions = useRegions(campaign?.player || "");
@@ -227,9 +213,10 @@ export default function Game({
   }, [creating, selected, campaign?.id]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || e.repeat || e.metaKey || e.ctrlKey || e.altKey || document.querySelector('[role="dialog"], [role="alertdialog"], .landing-page[data-menu-open="true"]')) return;
       if (
         e.key === "/" &&
-        !["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)
+        !(e.target as HTMLElement).closest("input, textarea, [contenteditable=true]")
       ) {
         e.preventDefault();
         setMobilePanel("nation");
@@ -326,13 +313,11 @@ export default function Game({
     try {
       let result,
         tokens = 0;
-      if (settings.provider === "demo") {
-        await new Promise((r) => setTimeout(r, 650));
-        result = demoTurn(campaign, submitted, settings);
-      } else {
-        if (!apiKey || !settings.model.trim())
-          throw Error("Add an API key and model in Settings → API first.");
-        const context = compactContext(
+      if (settings.provider !== "ollama" && !apiKey)
+        throw Error("Add an API key and model in Settings → API first.");
+      if (!settings.model.trim())
+        throw Error("Add a model in Settings → API first.");
+      const context = compactContext(
           campaign,
           submitted,
           settings,
@@ -353,7 +338,7 @@ export default function Game({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider: settings.provider,
-            key: apiKey,
+            key: settings.provider === "ollama" ? undefined : apiKey,
             model: settings.model,
             temperature: settings.temperature,
             maxTokens: settings.maxTokens,
@@ -380,7 +365,6 @@ export default function Game({
         result = data.result;
         tokens = data.tokens;
         receivedTokens = tokens;
-      }
       const next = applyTurn(campaign, result, submitted, settings, tokens);
       setUndo(null);
       await persist(next);
@@ -481,7 +465,7 @@ export default function Game({
     launchMode === "recent" ? saves.slice(0, 3) : saves;
   return (
     <main className={`${isMap ? "app-shell in-game" : "app-shell"}${embedded ? " embedded-game" : ""}`}>
-      <Toaster theme="dark" richColors position="top-center" />
+      <Toaster theme="dark" position="top-center" />
       <header className="topbar">
         <button
           className="wordmark"
@@ -518,23 +502,21 @@ export default function Game({
         </div>
         <div className="topbar-actions">
           {campaign && (
-            <button
+            <IconButton
               className="icon-button export-top"
-              title="Export campaign"
               aria-label="Export campaign"
               onClick={exportCampaign}
             >
               <DownloadSimple />
-            </button>
+            </IconButton>
           )}
-          <button
+          <IconButton
             className="icon-button"
             aria-label="Settings"
-            title="Settings"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => { setProfileOpen(false); setSettingsOpen(true); }}
           >
             <GearSix />
-          </button>
+          </IconButton>
           <button
             className="icon-button profile-button"
             aria-label="Player profile"
@@ -696,7 +678,7 @@ export default function Game({
           <footer>
             <span>NOVUS ARBITRIUM</span>
             <span>A world of consequence.</span>
-            <button onClick={() => setSettingsOpen(true)}>
+            <button onClick={() => { setProfileOpen(false); setSettingsOpen(true); }}>
               Alpha 0.1 · Help & credits <ArrowUpRight />
             </button>
           </footer>
@@ -777,7 +759,7 @@ export default function Game({
                 onChange={(e) => setQuery(e.target.value)}
                 disabled={busy || drawing || !!ring}
               />
-              <kbd>/</kbd>
+              <KeyHint name="slash" label="slash" />
             </div>
             {(query || creating) && (
               <div
@@ -997,7 +979,7 @@ export default function Game({
                 </button>
                 <p className="hint">
                   01 Jan 2026 ·{" "}
-                  {settings.provider === "demo" ? "Local demo" : "AI engine"} ·{" "}
+                  {settings.provider === "ollama" ? "Ollama" : "AI engine"} ·{" "}
                   {settings.difficulty}
                 </p>
               </div>
@@ -1191,9 +1173,7 @@ export default function Game({
                   <div className="decision-context">
                     <span>
                       <Lightning weight="fill" />
-                      {settings.provider === "demo"
-                        ? "LOCAL DEMO"
-                        : "AI ENGINE"}
+                      {settings.provider === "ollama" ? "OLLAMA" : "AI ENGINE"}
                     </span>
                     <span>
                       {campaign.status === "active"
@@ -1233,7 +1213,7 @@ export default function Game({
                         >
                           {busy ? <SpinnerGap className="spin" /> : <ArrowUp />}
                           {busy ? "Resolving…" : "Submit decision"}
-                          <kbd>Ctrl ↵</kbd>
+                          <span className="key-chord"><kbd>Ctrl</kbd><KeyHint name="enter" label="Enter" /></span>
                         </button>
                       </div>
                       {campaign.turn === 1 && !action && (

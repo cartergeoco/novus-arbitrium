@@ -70,7 +70,7 @@ export type Campaign = {
 export type Settings = {
   difficulty: string;
   turnDays: number;
-  provider: "demo" | "openai" | "openrouter";
+  provider: "ollama" | "openai" | "openrouter";
   model: string;
   temperature: number;
   maxTokens: number;
@@ -84,12 +84,14 @@ export type Settings = {
   sound: boolean;
   volume: number;
   labels: boolean;
+  texture: boolean;
+  highlights: boolean;
 };
 export const defaults: Settings = {
   difficulty: "Standard",
   turnDays: 7,
-  provider: "demo",
-  model: "",
+  provider: "ollama",
+  model: "llama3.2",
   temperature: 0.7,
   maxTokens: 1600,
   tokenBudget: 100000,
@@ -102,6 +104,8 @@ export const defaults: Settings = {
   sound: false,
   volume: 30,
   labels: true,
+  texture: true,
+  highlights: true,
 };
 const palette = [
   "#536c75",

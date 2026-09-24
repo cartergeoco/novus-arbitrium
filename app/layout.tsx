@@ -7,16 +7,17 @@ import "leaflet/dist/leaflet.css";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import "flag-icons/css/flag-icons.min.css";
 import "./globals.css";
+import "./polish.css";
 
 export const metadata: Metadata = {
-  title: "Novus Arbitrium — A world of consequence",
+  title: "Novus Arbitrium",
   description: "Lead a nation through an unwritten history. A playable alternate-history strategy alpha with editable borders and an AI world engine.",
   other: {
     "codex-preview": "development",
   },
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/novus-logo.svg",
+    shortcut: "/novus-logo.svg",
   },
 };
 

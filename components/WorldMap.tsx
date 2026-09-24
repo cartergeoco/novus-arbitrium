@@ -1,4 +1,5 @@
 "use client";
+import { IconButton } from "@/components/IconButton";
 import { useEffect, useRef, useState } from "react";
 import type * as Leaflet from "leaflet";
 import type { FeatureCollection } from "geojson";
@@ -39,6 +40,7 @@ export default function WorldMap(props: Props) {
   useEffect(() => {
     let cancelled = false;
     let observer: ResizeObserver;
+    let cleanupPan = () => {};
     (async () => {
       const leaflet = await import("leaflet");
       await import("@geoman-io/leaflet-geoman-free");
@@ -60,11 +62,41 @@ export default function WorldMap(props: Props) {
         ],
         maxBoundsViscosity: 0.7,
         scrollWheelZoom: !props.decorative,
-        dragging: !props.decorative,
+        // Pan is deliberately reserved for the middle mouse button so map clicks
+        // remain unambiguous when selecting nations.
+        dragging: false,
         doubleClickZoom: false,
         keyboard: !props.decorative,
       });
       map.current = m;
+      let panning = false;
+      let lastPoint: [number, number] = [0, 0];
+      const startPan = (event: MouseEvent) => {
+        if (props.decorative || event.button !== 1) return;
+        event.preventDefault();
+        panning = true;
+        lastPoint = [event.clientX, event.clientY];
+        container.current?.classList.add("is-panning");
+      };
+      const movePan = (event: MouseEvent) => {
+        if (!panning) return;
+        const dx = event.clientX - lastPoint[0];
+        const dy = event.clientY - lastPoint[1];
+        lastPoint = [event.clientX, event.clientY];
+        m.panBy([dx, dy], { animate: false });
+      };
+      const endPan = () => {
+        panning = false;
+        container.current?.classList.remove("is-panning");
+      };
+      container.current.addEventListener("mousedown", startPan);
+      window.addEventListener("mousemove", movePan);
+      window.addEventListener("mouseup", endPan);
+      cleanupPan = () => {
+        container.current?.removeEventListener("mousedown", startPan);
+        window.removeEventListener("mousemove", movePan);
+        window.removeEventListener("mouseup", endPan);
+      };
       m.fitBounds(
         [
           [-57, -160],
@@ -117,6 +149,7 @@ export default function WorldMap(props: Props) {
     })().catch(() => setError("The map could not load. Reload to try again."));
     return () => {
       cancelled = true;
+      cleanupPan();
       observer?.disconnect();
       map.current?.stop();
       map.current?.remove();
@@ -283,23 +316,20 @@ export default function WorldMap(props: Props) {
       {!props.decorative && (
         <>
           <div className="map-controls">
-            <button
-              title="Zoom in"
+            <IconButton
               aria-label="Zoom in"
               onClick={() => map.current?.zoomIn()}
             >
               <Plus />
-            </button>
-            <button
-              title="Zoom out"
+            </IconButton>
+            <IconButton
               aria-label="Zoom out"
               onClick={() => map.current?.zoomOut()}
             >
               <Minus />
-            </button>
+            </IconButton>
             <span />
-            <button
-              title="Focus selected nation"
+            <IconButton
               aria-label="Focus selected nation"
               onClick={() => {
                 const n = props.nations[props.selected];
@@ -312,9 +342,8 @@ export default function WorldMap(props: Props) {
               }}
             >
               <Crosshair />
-            </button>
-            <button
-              title="View entire world"
+            </IconButton>
+            <IconButton
               aria-label="View entire world"
               onClick={() =>
                 map.current?.fitBounds([
@@ -324,7 +353,7 @@ export default function WorldMap(props: Props) {
               }
             >
               <GlobeHemisphereWest />
-            </button>
+            </IconButton>
           </div>
           <div className="map-credit">
             Natural Earth · Leaflet <span>GENERALIZED BORDERS</span>

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { turnSchema } from "@/lib/game";
 const input = z.object({
-  provider: z.enum(["openai", "openrouter"]),
-  key: z.string().min(8).max(512),
+  provider: z.enum(["openai", "openrouter", "ollama"]),
+  key: z.string().max(512).optional(),
   model: z.string().min(1).max(120),
   temperature: z.number().min(0).max(2),
   maxTokens: z.number().int().min(512).max(8192),
@@ -24,10 +24,14 @@ export async function POST(request: Request) {
         { status: 413 },
       );
     const data = input.parse(JSON.parse(text));
+    if (data.provider !== "ollama" && (data.key?.length ?? 0) < 8)
+      return Response.json({ error: "Add an API key in Settings → API first." }, { status: 400 });
     const endpoint =
       data.provider === "openai"
         ? "https://api.openai.com/v1/chat/completions"
-        : "https://openrouter.ai/api/v1/chat/completions";
+        : data.provider === "ollama"
+          ? "http://127.0.0.1:11434/api/chat"
+          : "https://openrouter.ai/api/v1/chat/completions";
     const payload: Record<string, unknown> = {
       model: data.model,
       messages: [
@@ -45,16 +49,21 @@ export async function POST(request: Request) {
       payload.max_completion_tokens = data.maxTokens;
       if (!/^(gpt-5|gpt-6|o[134])/.test(data.model))
         payload.temperature = data.temperature;
+    } else if (data.provider === "ollama") {
+      payload.stream = false;
+      payload.format = "json";
+      payload.options = { temperature: data.temperature, num_predict: data.maxTokens };
+      delete payload.response_format;
+      delete payload.max_tokens;
     } else {
       payload.max_tokens = data.maxTokens;
       payload.temperature = data.temperature;
     }
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (data.provider !== "ollama" && data.key) headers.Authorization = `Bearer ${data.key}`;
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${data.key}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(60000),
     });
@@ -69,9 +78,12 @@ export async function POST(request: Request) {
     }
     const answer = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
+      message?: { content?: string };
       usage?: { total_tokens?: number };
+      prompt_eval_count?: number;
+      eval_count?: number;
     };
-    const content = answer.choices?.[0]?.message?.content;
+    const content = data.provider === "ollama" ? answer.message?.content : answer.choices?.[0]?.message?.content;
     if (!content) throw Error("The provider returned no usable response.");
     const parsed = turnSchema.safeParse(
       JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, "")),
@@ -81,12 +93,12 @@ export async function POST(request: Request) {
         {
           error:
             "The model returned an invalid turn. The world has not changed. Try a model that supports JSON output.",
-          tokens: answer.usage?.total_tokens || 0,
+          tokens: answer.usage?.total_tokens || (answer.prompt_eval_count || 0) + (answer.eval_count || 0),
         },
         { status: 422 },
       );
     return Response.json(
-      { result: parsed.data, tokens: answer.usage?.total_tokens || 0 },
+      { result: parsed.data, tokens: answer.usage?.total_tokens || (answer.prompt_eval_count || 0) + (answer.eval_count || 0) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

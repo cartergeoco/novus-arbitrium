@@ -51,10 +51,13 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  const returnFocus = React.useRef<HTMLElement | null>(null)
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -65,6 +68,23 @@ function DialogContent({
           className
         )}
         {...props}
+        onOpenAutoFocus={(event) => {
+          returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+          onOpenAutoFocus?.(event)
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event)
+          // A newly opened menu/dialog owns focus when switching surfaces.
+          if (document.querySelector('[data-slot="dialog-content"][data-state="open"], [data-slot="popover-content"][data-state="open"]')) {
+            event.preventDefault()
+            return
+          }
+          const target = returnFocus.current
+          if (!event.defaultPrevented && target?.isConnected && !target.closest("[inert]")) {
+            event.preventDefault()
+            target.focus({ preventScroll: true })
+          }
+        }}
       >
         {children}
         {showCloseButton && (

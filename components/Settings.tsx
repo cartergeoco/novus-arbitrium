@@ -1,10 +1,12 @@
 "use client";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { KeyHint } from "./KeyHint";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select,
@@ -23,6 +25,8 @@ import {
   SpeakerHigh,
   Question,
   ArrowSquareOut,
+  Eye,
+  EyeSlash,
 } from "@phosphor-icons/react";
 import type { Settings as SettingsType } from "@/lib/game";
 export function Choice({
@@ -30,18 +34,20 @@ export function Choice({
   onChange,
   options,
   label,
+  className = "",
 }: {
   value: string;
   onChange: (s: string) => void;
   options: (string | { value: string; label: string })[];
   label: string;
+  className?: string;
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger aria-label={label} className="choice">
+      <SelectTrigger aria-label={label} className={`choice ${className}`}>
         <SelectValue />
       </SelectTrigger>
-      <SelectContent position="popper" side="bottom" avoidCollisions={false}>
+      <SelectContent position="popper" side="bottom" sideOffset={6} collisionPadding={16}>
         {options.map((o) => {
           const v = typeof o === "string" ? o : o.value;
           return (
@@ -71,19 +77,23 @@ export default function Settings({
   setApiKey: (s: string) => void;
   tokens: number;
 }) {
+  const [tab, setTab] = useState("Game");
+  const [showKey, setShowKey] = useState(false);
   const set = <K extends keyof SettingsType>(key: K, v: SettingsType[K]) =>
     onChange({ ...settings, [key]: v });
   const toggle = (
-    key: "contrast" | "motion" | "transparency" | "sound" | "labels",
+    key: "contrast" | "motion" | "transparency" | "sound" | "labels" | "texture" | "highlights",
     title: string,
     description: string,
   ) => (
     <div className="setting-row">
       <div>
-        <h4>{title}</h4>
-        <p>{description}</p>
+        <h4><label htmlFor={`setting-${key}`}>{title}</label></h4>
+        <p id={`setting-${key}-description`}>{description}</p>
       </div>
       <Switch
+        id={`setting-${key}`}
+        aria-describedby={`setting-${key}-description`}
         aria-label={title}
         checked={settings[key]}
         onCheckedChange={(b) => set(key, b)}
@@ -91,11 +101,12 @@ export default function Settings({
     </div>
   );
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(value) => { setShowKey(false); onOpenChange(value); }}>
       <DialogContent className="settings-dialog">
         <DialogTitle>Settings</DialogTitle>
-        <DialogDescription>Make this world your own.</DialogDescription>
-        <Tabs defaultValue="Game" className="settings-tabs">
+        <DialogDescription className="sr-only">Game, appearance, and provider preferences.</DialogDescription>
+        <span className="brand-watermark" aria-hidden="true" />
+        <Tabs value={tab} onValueChange={setTab} className="settings-tabs" orientation="vertical">
           <TabsList className="settings-nav">
             {[
               ["Game", GameController],
@@ -201,6 +212,7 @@ export default function Settings({
                   placeholder="e.g. Favor slow, realistic political change."
                   onChange={(e) => set("prompt", e.target.value)}
                 />
+                <span className="field-count">{settings.prompt.length.toLocaleString()} / 1,500</span>
               </label>
             </TabsContent>
             <TabsContent value="API">
@@ -213,44 +225,49 @@ export default function Settings({
                     set("provider", v as SettingsType["provider"])
                   }
                   options={[
-                    { value: "demo", label: "Local demo · no key needed" },
+                    { value: "ollama", label: "Ollama" },
                     { value: "openrouter", label: "OpenRouter" },
                     { value: "openai", label: "OpenAI" },
                   ]}
                   label="Provider"
                 />
               </label>
-              {settings.provider !== "demo" ? (
-                <>
-                  <label>
-                    Model ID
-                    <input
-                      value={settings.model}
-                      onChange={(e) => set("model", e.target.value)}
-                      placeholder={
-                        settings.provider === "openrouter"
-                          ? "provider/model-name"
-                          : "Your model ID"
-                      }
-                      maxLength={120}
-                    />
-                  </label>
-                  <label>
-                    API key
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="Paste your provider key"
-                    />
-                  </label>
-                  <p className="hint">
-                    Held in memory for this tab only. Sent through this site's
-                    server to your selected provider when you submit a decision.
-                    Never included in saves or exports. Provider charges apply.
-                  </p>
+              <label>
+                Model ID
+                <input
+                  value={settings.model}
+                  onChange={(e) => set("model", e.target.value)}
+                  placeholder={
+                    settings.provider === "ollama"
+                      ? "llama3.2"
+                      : settings.provider === "openrouter"
+                        ? "provider/model-name"
+                        : "Your model ID"
+                  }
+                  maxLength={120}
+                />
+              </label>
+              {settings.provider !== "ollama" && (
+              <label>
+                API key
+                <span className="secret-field">
+                <input
+                  type={showKey ? "text" : "password"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Paste your provider key"
+                />
+                <button type="button" aria-label={showKey ? "Hide API key" : "Show API key"} aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeSlash /> : <Eye />}</button>
+                </span>
+              </label>
+              )}
+              <p className="hint">
+                {settings.provider === "ollama"
+                  ? "Ollama runs on this computer at 127.0.0.1:11434. The model name must already be pulled. No API key is sent."
+                  : "Held in memory for this tab only. Sent through this site&apos;s server to your selected provider when you submit a decision. Never included in saves or exports. Provider charges apply."}
+              </p>
                   <label>
                     Campaign token budget
                     <input
@@ -272,14 +289,6 @@ export default function Settings({
                     turn is blocked when its estimated cost exceeds the
                     remaining budget.
                   </p>
-                </>
-              ) : (
-                <div className="info-note">
-                  The local demo uses policy rules to demonstrate the game loop.
-                  It does not use AI. Choose a provider and a model that
-                  supports JSON responses for open-ended decisions.
-                </div>
-              )}
             </TabsContent>
             <TabsContent value="Appearance">
               <h3>Display</h3>
@@ -296,8 +305,10 @@ export default function Settings({
               {toggle(
                 "transparency",
                 "Panel transparency",
-                "Let the map show softly through panels.",
+                "Frosted glass with a soft view of the world behind it.",
               )}
+              {toggle("texture", "Film grain", "A fine, still texture across the interface.")}
+              {toggle("highlights", "Interactive lighting", "A soft highlight follows your pointer along edges.")}
               {toggle(
                 "labels",
                 "Country labels",
@@ -347,16 +358,20 @@ export default function Settings({
                 your nation dissolves or stability reaches zero.
               </p>
               <div className="help-keys">
+                <span>Quick navigation</span>
+                <span className="key-chord"><kbd>Ctrl</kbd><kbd>Space</kbd></span>
+                <span>Search your library</span>
+                <KeyHint name="slash" label="slash" />
                 <span>Submit a decision</span>
-                <kbd>Ctrl / ⌘ + Enter</kbd>
+                <span className="key-chord"><kbd>Ctrl</kbd><KeyHint name="meta" label="Command" /><KeyHint name="enter" label="Enter" /></span>
                 <span>Close a dialog</span>
-                <kbd>Esc</kbd>
+                <KeyHint name="esc" label="Escape" />
                 <span>Move the map</span>
-                <kbd>Drag</kbd>
+                <span className="key-chord"><KeyHint name="mouse" label="Middle mouse" /><span>drag</span></span>
               </div>
               <h4>World laboratory</h4>
               <p>
-                Draw any polygon across a selected nation's land to create a
+                Draw any polygon across a selected nation&apos;s land to create a
                 breakaway state or transfer territory. Changes are clipped to
                 land and can be undone until the next turn. Population and GDP
                 are apportioned by area in this alpha.
