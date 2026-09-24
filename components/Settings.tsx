@@ -41,7 +41,7 @@ export function Choice({
       <SelectTrigger aria-label={label} className="choice">
         <SelectValue />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent position="popper" side="bottom" avoidCollisions={false}>
         {options.map((o) => {
           const v = typeof o === "string" ? o : o.value;
           return (
@@ -106,7 +106,7 @@ export default function Settings({
               ["Help", Question],
             ].map(([name, Icon]) => (
               <TabsTrigger key={String(name)} value={String(name)}>
-                <Icon size={19} />
+                <Icon size={19} weight="fill" />
                 {String(name)}
               </TabsTrigger>
             ))}

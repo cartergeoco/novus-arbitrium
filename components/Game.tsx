@@ -59,6 +59,7 @@ import { toast, Toaster } from "sonner";
 import Settings, { Choice } from "./Settings";
 import Flag from "./Flag";
 import IdentityEditor from "./IdentityEditor";
+import { Starfield } from "./Starfield";
 import {
   defaults,
   createCampaign,
@@ -119,13 +120,28 @@ function useRegions(id: string) {
   }, [id]);
   return { regions, failed };
 }
-export default function Game() {
+
+export type GameLaunchMode = "new" | "recent" | "library";
+
+type GameProps = {
+  launchMode?: GameLaunchMode;
+  onExit?: () => void;
+  initialCampaign?: Campaign;
+  embedded?: boolean;
+};
+
+export default function Game({
+  launchMode = "library",
+  onExit,
+  initialCampaign,
+  embedded = false,
+}: GameProps = {}) {
   const [world, setWorld] = useState<FeatureCollection | null>(null),
     [worldError, setWorldError] = useState(""),
     [saves, setSaves] = useState<Campaign[]>([]),
     [loading, setLoading] = useState(true),
-    [campaign, setCampaign] = useState<Campaign | null>(null),
-    [creating, setCreating] = useState(false),
+    [campaign, setCampaign] = useState<Campaign | null>(initialCampaign || null),
+    [creating, setCreating] = useState(launchMode === "new"),
     [selected, setSelected] = useState("USA"),
     [settings, setSettings] = useState<SettingsType>(defaults),
     [settingsOpen, setSettingsOpen] = useState(false),
@@ -265,6 +281,10 @@ export default function Game() {
   };
   const goHome = () => {
     if (busy) return;
+    if (onExit) {
+      onExit();
+      return;
+    }
     setCampaign(null);
     setCreating(false);
     setLab(false);
@@ -457,8 +477,10 @@ export default function Game() {
     }
   }
   const isMap = creating || !!campaign;
+  const displayedSaves =
+    launchMode === "recent" ? saves.slice(0, 3) : saves;
   return (
-    <main className={isMap ? "app-shell in-game" : "app-shell"}>
+    <main className={`${isMap ? "app-shell in-game" : "app-shell"}${embedded ? " embedded-game" : ""}`}>
       <Toaster theme="dark" richColors position="top-center" />
       <header className="topbar">
         <button
@@ -537,11 +559,15 @@ export default function Game() {
         </div>
       ) : !isMap ? (
         <div className="dashboard">
+          <Starfield />
           <div className="dashboard-heading">
             <div>
               <p className="eyebrow">THE WORLD AWAITS</p>
               <h1>
-                Your campaigns<span>.</span>
+                {launchMode === "recent"
+                  ? "Recent campaigns"
+                  : "Your campaigns"}
+                <span>.</span>
               </h1>
               <p>Every decision begins a different history.</p>
             </div>
@@ -558,7 +584,7 @@ export default function Game() {
             </button>
           </div>
           <div className="campaign-grid">
-            {saves.map((c) => {
+            {displayedSaves.map((c) => {
               const n = c.nations[c.player];
               return (
                 <article className="campaign-card" key={c.id}>
