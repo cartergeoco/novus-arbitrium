@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","bbox":[12.452714,41.902752,12.454035,41.903915],"properties":{"id":"VAT+00?","name":"Vatican City","country":"VAT","type":"Region","population":null},"geometry":{"type":"Polygon","coordinates":[[[12.453031,41.903915],[12.454035,41.902752],[12.452714,41.903016],[12.453031,41.903915]]]}}]}

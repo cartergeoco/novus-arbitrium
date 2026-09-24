@@ -1,0 +1,8 @@
+{
+  "source": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/",
+  "version": "5.1.2",
+  "license": "Public domain",
+  "countries": 241,
+  "regions": 4596,
+  "notes": "Generalized geographic baseline, not an authoritative 2026 border dataset. Population and GDP retain source reference years. Province demographic and ideological research is not included."
+}
