@@ -29,6 +29,13 @@ const nation = z.object({
   relations: finite.min(-100).max(100),
   ideology: z.string().max(100),
   goal: z.string().max(200),
+  government: z.string().max(100).optional(),
+  leader: z.string().max(100).optional(),
+  culture: z.string().max(100).optional(),
+  allies: z.array(z.string().max(40)).max(100).optional(),
+  rivals: z.array(z.string().max(40)).max(100).optional(),
+  claims: z.array(z.string().max(80)).max(100).optional(),
+  history: z.array(z.string().max(240)).max(100).optional(),
   geometry,
   original: z.boolean(),
 });
@@ -70,6 +77,24 @@ export const campaignSchema = z
     updatedAt: z.string().max(50),
     status: z.enum(["active", "defeat", "victory"]),
     tokens: finite.min(0),
+    regions: z.record(z.object({
+      owner: z.string().max(40),
+      controller: z.string().max(40),
+      damage: finite.min(0).max(100),
+      unrest: finite.min(0).max(100),
+      geometry: geometry.optional(),
+      name: z.string().max(100).optional(),
+      origin: z.string().max(40).optional(),
+    })).optional(),
+    removedRegions: z.array(z.string().max(100)).max(20000).optional(),
+    wars: z.array(z.object({
+      id: z.string().max(80),
+      attackers: z.array(z.string().max(40)).min(1).max(20),
+      defenders: z.array(z.string().max(40)).min(1).max(20),
+      goal: z.string().max(240),
+      started: date,
+      status: z.enum(["active", "ended"]),
+    })).max(1000).optional(),
   })
   .refine((c) => c.status === "defeat" || !!c.nations[c.player]);
 export function parseCampaign(raw: unknown): Campaign {

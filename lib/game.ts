@@ -16,6 +16,7 @@ import type {
   Polygon,
   MultiPolygon,
 } from "geojson";
+import { changeRegion, recordTerritorySplit, type RegionAtlas, type RegionState } from "./world-regions";
 export type Land = Feature<Polygon | MultiPolygon>;
 export type FlagSpec = {
   layout: "horizontal" | "vertical" | "cross" | "diagonal" | "canton";
@@ -40,8 +41,23 @@ export type Nation = {
   relations: number;
   ideology: string;
   goal: string;
+  government?: string;
+  leader?: string;
+  culture?: string;
+  allies?: string[];
+  rivals?: string[];
+  claims?: string[];
+  history?: string[];
   geometry: Land["geometry"];
   original: boolean;
+};
+export type War = {
+  id: string;
+  attackers: string[];
+  defenders: string[];
+  goal: string;
+  started: string;
+  status: "active" | "ended";
 };
 export type Event = {
   id: string;
@@ -66,6 +82,9 @@ export type Campaign = {
   updatedAt: string;
   status: "active" | "defeat" | "victory";
   tokens: number;
+  regions?: Record<string, RegionState>;
+  removedRegions?: string[];
+  wars?: War[];
 };
 export type Settings = {
   difficulty: string;
@@ -166,6 +185,13 @@ export function createCampaign(
       influence: 35 + (h % 50),
       relations: 0,
       ideology: "Status quo",
+      government: "Unspecified",
+      leader: "Unspecified",
+      culture: "Unspecified",
+      allies: [],
+      rivals: [],
+      claims: [],
+      history: [],
       goal: [
         "Regional security",
         "Economic development",
@@ -200,6 +226,9 @@ export function createCampaign(
     updatedAt: now,
     status: "active",
     tokens: 0,
+    regions: {},
+    removedRegions: [],
+    wars: [],
   };
 }
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
@@ -226,6 +255,9 @@ export const turnSchema = z.object({
         relations: z.number().min(-30).max(30).default(0),
         name: z.string().min(2).max(80).optional(),
         ideology: z.string().max(100).optional(),
+        government: z.string().max(100).optional(),
+        leader: z.string().max(100).optional(),
+        goal: z.string().max(200).optional(),
         flag: flagSchema.optional(),
       }),
     )
@@ -246,6 +278,18 @@ export const turnSchema = z.object({
     )
     .max(3)
     .default([]),
+  regionActions: z.array(z.object({
+    region: z.string().max(80),
+    mode: z.enum(["occupy", "liberate", "cede"]),
+    actor: z.string().max(40),
+    reason: z.string().max(240),
+  })).max(8).default([]),
+  conflicts: z.array(z.object({
+    action: z.enum(["start", "end"]),
+    attacker: z.string().max(40),
+    defender: z.string().max(40),
+    goal: z.string().max(240),
+  })).max(3).default([]),
 });
 export type TurnResult = z.infer<typeof turnSchema>;
 export function transferTerritory(
@@ -329,9 +373,11 @@ export function applyTurn(
   action: string,
   settings: Settings,
   tokens = 0,
+  atlas?: RegionAtlas | null,
 ): Campaign {
   const result = turnSchema.parse(raw);
   let nations = structuredClone(c.nations);
+  let regional: Campaign = { ...c, nations, regions: { ...(c.regions || {}) }, removedRegions: [...(c.removedRegions || [])] };
   const changes: string[] = [];
   for (const effect of result.effects) {
     const n = nations[effect.id];
@@ -352,6 +398,9 @@ export function applyTurn(
     if (effect.id !== c.player) {
       if (effect.name) n.name = effect.name;
       if (effect.ideology) n.ideology = effect.ideology;
+      if (effect.government) n.government = effect.government;
+      if (effect.leader) n.leader = effect.leader;
+      if (effect.goal) n.goal = effect.goal;
       if (effect.flag) {
         n.flag = effect.flag;
         n.original = false;
@@ -359,6 +408,7 @@ export function applyTurn(
     }
   }
   for (const op of result.territories) {
+    const before = nations;
     nations = transferTerritory(
       nations,
       op.source,
@@ -367,9 +417,36 @@ export function applyTurn(
       op.name,
       op.flag,
     );
+    if (atlas) {
+      const recipient = op.target || Object.keys(nations).find((id) => !before[id]);
+      if (recipient) {
+        regional = { ...regional, nations, ...recordTerritorySplit(regional, atlas, op.source, recipient, op.ring) };
+      }
+    }
     changes.push(
       `${op.name || nations[op.target || ""]?.name || "New state"}: territory changed`,
     );
+  }
+  regional.nations = nations;
+  for (const op of result.regionActions) {
+    if (!atlas) throw Error("Regional atlas is still loading. No turn was applied.");
+    regional = changeRegion(regional, atlas, op.region, op.mode, op.actor);
+    changes.push(`${op.region}: ${op.mode} by ${regional.nations[op.actor]?.name || op.actor}`);
+  }
+  nations = regional.nations;
+  const wars = [...(c.wars || [])];
+  for (const conflict of result.conflicts) {
+    if (!nations[conflict.attacker] || !nations[conflict.defender] || conflict.attacker === conflict.defender)
+      throw Error("A conflict referenced an unknown nation.");
+    const existing = wars.find((w) => w.status === "active" && w.attackers.includes(conflict.attacker) && w.defenders.includes(conflict.defender));
+    if (conflict.action === "start" && !existing) {
+      wars.push({ id: crypto.randomUUID(), attackers: [conflict.attacker], defenders: [conflict.defender], goal: conflict.goal, started: c.date, status: "active" });
+      changes.push(`${nations[conflict.attacker].name} and ${nations[conflict.defender].name}: war began`);
+    }
+    if (conflict.action === "end" && existing) {
+      existing.status = "ended";
+      changes.push(`${nations[conflict.attacker].name} and ${nations[conflict.defender].name}: war ended`);
+    }
   }
   const date = new Date(c.date + "T12:00:00Z");
   date.setUTCDate(date.getUTCDate() + settings.turnDays);
@@ -388,6 +465,9 @@ export function applyTurn(
   const next: Campaign = {
     ...c,
     nations,
+    regions: regional.regions,
+    removedRegions: regional.removedRegions,
+    wars,
     date: day,
     turn,
     tokens: c.tokens + tokens,
