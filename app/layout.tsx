@@ -8,7 +8,6 @@ import "@fontsource/poppins/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "leaflet/dist/leaflet.css";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
-import "flag-icons/css/flag-icons.min.css";
 import "./globals.css";
 import "./polish.css";
 import "./flag-creator.css";

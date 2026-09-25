@@ -31,7 +31,7 @@ API keys stay in the browser tab. The app forwards them only through its own ser
 - Start a campaign from the world map. Search, pan, zoom, and identify countries.
 - Campaigns are saved in IndexedDB on this device. Export and import validated JSON. Deleting a campaign asks for confirmation.
 - Set the time step and difficulty, issue decisions, and read the chronicle.
-- Edit national identity, including a layered SVG flag. Official country flags use the MIT-licensed `flag-icons` set. Custom and successor flags are drawn by the in-app flag engine.
+- Edit national identity, including a layered SVG flag. Official country flags are the MIT-licensed ISO 3166-1 SVGs from iso3166-flags. Custom and successor flags are drawn by the in-app flag engine.
 - Draw a polygon to cut or transfer territory. New polities receive a derived flag and identity. Undo is available until the next turn.
 
 ## Flags
@@ -43,7 +43,8 @@ Emblem artwork comes from reusable open licenses:
 - [Game-icons.net](https://game-icons.net/) — CC BY 3.0
 - [Material Design Icons](https://pictogrammers.com/library/mdi/) — Apache-2.0
 - [Font Awesome Free](https://fontawesome.com/license/free) — CC BY 4.0
-- [flag-icons](https://github.com/lipis/flag-icons) — MIT
+- [iso3166-flags](https://github.com/amckenna41/iso3166-flags) — MIT (ISO 3166-1 country flags)
+- [flag-icons](https://github.com/lipis/flag-icons) — MIT (emblem artwork)
 
 Regenerate the emblem index with `npm run flag:assets` after installing dependencies. `npm run flag` renders, describes, and lists catalog entries from the command line.
 
