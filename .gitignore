@@ -71,3 +71,5 @@ cloudflared-config.yml
 *.log
 *.local
 .vite/
+
+.vercel

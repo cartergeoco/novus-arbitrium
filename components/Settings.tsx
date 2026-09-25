@@ -267,9 +267,8 @@ export default function Settings({
                   {connection.models.map((model) => <option key={model} value={model} />)}
                 </datalist>
               </label>
-              {settings.provider !== "ollama" && (
               <label>
-                API key
+                {settings.provider === "ollama" ? "Ollama access key" : "API key"}
                 <span className="secret-field">
                 <input
                   type={showKey ? "text" : "password"}
@@ -278,16 +277,15 @@ export default function Settings({
                   spellCheck={false}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Paste your provider key"
+                  placeholder={settings.provider === "ollama" ? "Required on the public site; optional in local development" : "Paste your provider key"}
                 />
                 <button type="button" aria-label={showKey ? "Hide API key" : "Show API key"} aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeSlash /> : <Eye />}</button>
                 </span>
               </label>
-              )}
               <p className="hint" role="status">
                 {connection.message}{" "}
                 {settings.provider === "ollama"
-                  ? "The site server contacts Ollama. On this computer that is 127.0.0.1:11434. A deployed site uses the private endpoint configured on the server. No API key from this tab is sent."
+                  ? "The site server contacts Ollama. Local development needs no key. A public deployment requires the access key configured on the server. It stays in memory for this tab and is never included in saves or exports."
                   : "Keys stay in memory for this tab, separately for each provider. Sent through this site's server for verification and decisions. Never included in saves or exports. Provider charges apply to generation."}
               </p>
             </TabsContent>
@@ -355,8 +353,10 @@ export default function Settings({
               </h3>
               <p>
                 Choose a nation, describe a decision, and advance your timeline.
-                Click countries to inspect them. Your administration ends if
-                your nation dissolves or stability reaches zero.
+                Click countries to inspect them. A score of zero does not end
+                the campaign. It brings civil wars, mutinies, and shortages.
+                The campaign ends only if your country leaves the map, or if
+                one flag covers the world.
               </p>
               <div className="help-keys">
                 <span>Quick navigation</span>

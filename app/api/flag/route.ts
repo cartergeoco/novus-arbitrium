@@ -3,7 +3,7 @@ import { flagPromptGuide } from "@/lib/flag/catalog";
 import { normalizeFlag } from "@/lib/flag/normalize";
 import { generationFields, supportsTemperature, type Provider } from "@/lib/settings";
 import {
-  checkOrigin, connectionSchema, fetchProvider, jsonResponse, openRouterInfo, ProviderError, providerEndpoint, providerHeaders, requestError,
+  authorizeProvider, checkOrigin, connectionSchema, fetchProvider, jsonResponse, openRouterInfo, ProviderError, providerEndpoint, providerHeaders, readJsonRequest, readProviderJson, requestError,
 } from "@/lib/providers";
 
 const input = connectionSchema.extend({
@@ -26,10 +26,9 @@ export async function POST(request: Request) {
   let provider: Provider | undefined;
   try {
     checkOrigin(request);
-    const text = await request.text();
-    if (text.length > 40000) return jsonResponse({ error: "Flag request is too large." }, 413);
-    const data = input.parse(JSON.parse(text));
+    const data = input.parse(await readJsonRequest(request, 40000));
     provider = data.provider;
+    await authorizeProvider(data);
     const current = data.current ? normalizeFlag(data.current).design : undefined;
     const messages = [
       { role: "system", content: system },
@@ -53,7 +52,7 @@ export async function POST(request: Request) {
       if (supportsTemperature(provider, data.model)) payload.temperature = data.temperature;
     }
     const response = await fetchProvider(providerEndpoint(provider), { method: "POST", headers: providerHeaders(data), body: JSON.stringify(payload), signal }, provider);
-    const answer = answerSchema.safeParse(await response.json());
+    const answer = answerSchema.safeParse(await readProviderJson(response));
     if (!answer.success) return jsonResponse({ error: "The provider returned an invalid response." }, 502);
     const content = provider === "ollama" ? answer.data.message?.content : answer.data.choices?.[0]?.message?.content;
     if (!content?.trim()) return jsonResponse({ error: "The model returned no flag. Increase the response limit or choose another model." }, 422);

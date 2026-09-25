@@ -380,7 +380,7 @@ export default function Game({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: settings.provider,
-          key: settings.provider === "ollama" ? undefined : apiKey,
+          key: apiKey || undefined,
           model: settings.model,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
@@ -1215,7 +1215,7 @@ export default function Game({
                       </h3>
                       <p>
                         {campaign.status === "defeat"
-                          ? "Your nation has dissolved or lost domestic stability. Your chronicle remains available."
+                          ? "Your country is no longer on the map. Your chronicle remains available."
                           : "Every remaining territory is united under your administration."}
                       </p>
                       <button className="primary-button" onClick={goHome}>
@@ -1263,7 +1263,7 @@ export default function Game({
           nation={player}
           ai={settings.model.trim() && (settings.provider === "ollama" || apiKey) ? {
             provider: settings.provider,
-            key: settings.provider === "ollama" ? undefined : apiKey,
+            key: apiKey || undefined,
             model: settings.model,
             temperature: settings.temperature,
             maxTokens: settings.maxTokens,

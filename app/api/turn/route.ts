@@ -4,8 +4,8 @@ import { turnOutputSchema } from "@/lib/turn-output-schema";
 import { generationFields, supportsTemperature, type Provider } from "@/lib/settings";
 import { estimateMessageTokens, estimateTurnTokens, turnMessages } from "@/lib/generation";
 import {
-  checkOrigin, connectionSchema, fetchProvider, jsonResponse, providerEndpoint,
-  ollamaContextLength, openRouterInfo, ProviderError, providerHeaders, requestError,
+  authorizeProvider, checkOrigin, connectionSchema, fetchProvider, jsonResponse, providerEndpoint,
+  ollamaContextLength, openRouterInfo, ProviderError, providerHeaders, readJsonRequest, readProviderJson, requestError,
 } from "@/lib/providers";
 
 const input = connectionSchema.extend({
@@ -28,10 +28,9 @@ export async function POST(request: Request) {
   let provider: Provider | undefined;
   try {
     checkOrigin(request);
-    const text = await request.text();
-    if (text.length > 90000) return jsonResponse({ error: "Turn context is too large. Reduce nations in context or scenario instructions in Generation." }, 413);
-    const data = input.parse(JSON.parse(text));
+    const data = input.parse(await readJsonRequest(request, 90000));
     provider = data.provider;
+    await authorizeProvider(data);
     const headers = providerHeaders(data);
     const estimate = estimateTurnTokens(data, data.context);
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(provider === "ollama" ? 180000 : 60000)]);
@@ -66,7 +65,7 @@ export async function POST(request: Request) {
     const response = await fetchProvider(providerEndpoint(provider), {
       method: "POST", headers, body: JSON.stringify(payload), signal,
     }, provider);
-    const raw = await response.json();
+    const raw = await readProviderJson(response);
     const answer = answerSchema.safeParse(raw);
     if (!answer.success) return jsonResponse({ error: "The provider returned an invalid response. Your world has not changed." }, 502);
     const result = answer.data;

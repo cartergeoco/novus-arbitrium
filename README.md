@@ -56,14 +56,16 @@ A deployed site can reach Ollama on your computer through a stable private HTTPS
 On the computer running Ollama:
 
 ```sh
-# .env.ollama.local is gitignored. Set OLLAMA_TOKEN to a long random value.
+# .env.ollama.local is gitignored. Set OLLAMA_TOKEN to a random 32+ character value.
 npm run ollama:gateway
 tailscale funnel --bg --set-path=/novus-ollama 11435
 ```
 
-The gateway listens on `127.0.0.1:11435`, checks `Authorization: Bearer`, and forwards only `/api/` requests to Ollama. Funnel publishes that path. Port `11434` stays closed. Use a path so this does not replace other services on the same Tailscale hostname.
+The gateway listens on `127.0.0.1:11435`, checks `Authorization: Bearer`, and permits only model listing, model information, and chat generation. Funnel publishes that path. Port `11434` stays closed. Use a path so this does not replace other services on the same Tailscale hostname.
 
-On the host that runs the website, set `OLLAMA_BASE_URL` to `https://<machine>.<tailnet>.ts.net/novus-ollama` and `OLLAMA_TOKEN` to the same value. See `.env.example`. Turn responses are JSON, not a token stream; the gateway still forwards a response body as it arrives.
+On the host that runs the website, set `OLLAMA_BASE_URL` to `https://<machine>.<tailnet>.ts.net/novus-ollama` and `OLLAMA_TOKEN` to the gateway token. Set a **different** random 32+ character `OLLAMA_CLIENT_KEY` there. Enter that client key in Settings → API when selecting Ollama; it remains in tab memory and is never saved. Without it, a public production website refuses Ollama requests even if Ollama is on the same server. See `.env.example`. Rotate both secrets if either is exposed. Turn responses are JSON, not a token stream; the gateway still forwards a response body as it arrives.
+
+For a public domain, generate each secret independently with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Store the server values in your hosting provider's secret settings, not in source control. Redirect HTTP to HTTPS at the edge. Rate-limit `/api/provider`, `/api/turn`, and `/api/flag` at the edge for your expected traffic; the app rejects cross-site and oversized requests but in-process limits cannot reliably cover every Worker instance. Keep the Ollama service itself bound to loopback and expose only the authenticated gateway.
 
 The token figure in a campaign is provider usage plus a conservative estimate. It is not a spending cap. Set spending limits in the provider account. A rejected request can still be billed by the provider.
 

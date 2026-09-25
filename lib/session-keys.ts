@@ -5,9 +5,8 @@ export function createSessionKeys() {
   const keys: Partial<Record<Provider, string>> = {};
   const listeners = new Set<() => void>();
   return {
-    get: (provider: Provider) => provider === "ollama" ? "" : keys[provider] || "",
+    get: (provider: Provider) => keys[provider] || "",
     set(provider: Provider, value: string) {
-      if (provider === "ollama") return;
       keys[provider] = value.trim();
       listeners.forEach((listener) => listener());
     },
