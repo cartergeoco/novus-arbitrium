@@ -1,0 +1,86 @@
+import { z } from "zod";
+
+export const providerSchema = z.enum(["ollama", "openai", "openrouter"]);
+export type Provider = z.infer<typeof providerSchema>;
+export const providerDefaults: Record<Provider, string> = {
+  ollama: "llama3.2",
+  openai: "gpt-4.1-mini",
+  openrouter: "openai/gpt-4.1-mini",
+};
+export const limits = {
+  maxTokens: { min: 512, max: 8192 },
+  temperature: { min: 0, max: 1.5 },
+  contextNations: { min: 3, max: 16 },
+} as const;
+const boundedInteger = ({ min, max }: { min: number; max: number }) => z.number().int().min(min).max(max);
+export const generationFields = {
+  temperature: z.number().finite().min(limits.temperature.min).max(limits.temperature.max),
+  maxTokens: boundedInteger(limits.maxTokens),
+  prompt: z.string().max(1500),
+};
+const savedModel = z.string().max(120);
+const settingsSchema = z.object({
+  difficulty: z.enum(["Standard", "Challenging"]),
+  turnDays: z.union([z.literal(1), z.literal(7), z.literal(30)]),
+  provider: providerSchema,
+  model: savedModel,
+  providerModels: z.object({ ollama: savedModel, openai: savedModel, openrouter: savedModel }),
+  ...generationFields,
+  contextNations: boundedInteger(limits.contextNations),
+  contrast: z.boolean(), motion: z.boolean(), transparency: z.boolean(),
+  fontSize: z.number().int().min(16).max(20), sound: z.boolean(),
+  volume: z.number().finite().min(0).max(100), labels: z.boolean(),
+  texture: z.boolean(), highlights: z.boolean(),
+});
+export type Settings = z.infer<typeof settingsSchema>;
+export const defaults: Settings = {
+  difficulty: "Standard", turnDays: 7, provider: "ollama", model: providerDefaults.ollama,
+  providerModels: { ...providerDefaults }, temperature: 0.7, maxTokens: 1600,
+  contextNations: 8, prompt: "", contrast: false,
+  motion: false, transparency: true, fontSize: 16, sound: false, volume: 30,
+  labels: true, texture: true, highlights: true,
+};
+
+/** Recover individual preferences; a bad numeric value must not erase the rest. */
+export function parseSettings(raw: unknown): Settings {
+  const stored = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? { ...raw } as Record<string, unknown> : {};
+  const legacyDemo = stored.provider === "demo";
+  if (legacyDemo) { stored.provider = "ollama"; stored.model = providerDefaults.ollama; }
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(settingsSchema.shape) as (keyof Settings)[]) {
+    const parsed = settingsSchema.shape[key].safeParse(stored[key]);
+    result[key] = parsed.success ? parsed.data : defaults[key];
+  }
+  const settings = result as Settings;
+  const models = stored.providerModels && typeof stored.providerModels === "object"
+    ? stored.providerModels as Record<string, unknown> : {};
+  settings.providerModels = { ...providerDefaults };
+  for (const provider of providerSchema.options) {
+    const parsed = savedModel.safeParse(models[provider]);
+    if (parsed.success) settings.providerModels[provider] = parsed.data;
+  }
+  if (!savedModel.safeParse(stored.model).success) settings.model = settings.providerModels[settings.provider];
+  settings.providerModels[settings.provider] = settings.model;
+  return settings;
+}
+
+export function selectProvider(settings: Settings, provider: Provider): Settings {
+  return {
+    ...settings, provider, model: settings.providerModels[provider],
+    providerModels: { ...settings.providerModels, [settings.provider]: settings.model },
+  };
+}
+
+export function normalizeNumber(value: string, fallback: number, range: { min: number; max: number }) {
+  const number = Number(value);
+  return !value.trim() || !Number.isFinite(number) ? fallback
+    : Math.max(range.min, Math.min(range.max, Math.round(number)));
+}
+
+// With default reasoning enabled, these OpenAI families own their sampling.
+export function supportsTemperature(provider: Provider, model: string) {
+  if (provider === "ollama") return true;
+  const id = model.trim().replace(/^openai\//, "").replace(/^ft:/, "");
+  return !/^(?:o[134](?:-|$)|gpt-[5-9](?:[.-]|$))/.test(id);
+}
