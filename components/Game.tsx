@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { useApiKey } from "@/hooks/use-api-key";
 import { useProviderConnection } from "@/hooks/use-provider-connection";
+import { ensureBrowserCheck } from "@/lib/browser-check-client";
 import { IconButton } from "@/components/IconButton";
 import dynamic from "next/dynamic";
 import type { FeatureCollection } from "geojson";
@@ -377,6 +378,7 @@ export default function Game({
       const context = compactContext(campaign, submitted, settings, allRegions);
       const controller = new AbortController();
       requestRef.current = controller;
+      await ensureBrowserCheck();
       const response = await fetch("/api/turn", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

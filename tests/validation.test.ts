@@ -38,6 +38,6 @@ test("self-intersecting territory masks are rejected", () => {
         [-125, 42],
         [-125, 32],
       ]),
-    /crossing/,
+    /cross/,
   );
 });

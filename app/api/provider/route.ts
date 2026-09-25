@@ -1,10 +1,12 @@
 import { authorizeProvider, checkOrigin, connectionSchema, inspectProvider, jsonResponse, readJsonRequest, requestError } from "@/lib/providers";
 import type { Provider } from "@/lib/settings";
+import { requireBrowserCheck } from "@/lib/browser-check";
 
 export async function POST(request: Request) {
   let provider: Provider | undefined;
   try {
     checkOrigin(request);
+    await requireBrowserCheck(request);
     const data = connectionSchema.parse(await readJsonRequest(request, 2048));
     provider = data.provider;
     await authorizeProvider(data);

@@ -134,6 +134,11 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
   const [playing, setPlaying] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("auth_error")) return;
+    const frame = window.requestAnimationFrame(() => setProfileOpen(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [savedCampaigns, setSavedCampaigns] = useState<Campaign[]>([]);
   const [savesLoading, setSavesLoading] = useState(true);
