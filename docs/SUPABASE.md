@@ -10,7 +10,33 @@ The secret key is used only for private campaign Storage operations. The Auth ro
 
 ## 2. Email codes
 
-In **Authentication → Sign In / Providers**, enable Email. In **Authentication → Email Templates**, change the passwordless sign-in template to include the code variable `{{ .Token }}` (and the signup confirmation template if your project uses it). A minimal body is `Your Novus Arbitrium sign-in code is: {{ .Token }}`. The menu requests a code, then calls Supabase `verifyOtp` with that code; the server sets the session cookie only after verification. Keep email confirmation enabled.
+In **Authentication → Sign In / Providers**, enable Email and keep email confirmation enabled. The app never signs someone in from a link. Signup calls `signUp`, password reset calls `resetPasswordForEmail`, and a later sign-in code calls `signInWithOtp`. Each of those sends one of the templates below. The menu then asks for the code and the server calls `verifyOtp`.
+
+In **Authentication → Email Templates**, replace the Confirm signup, Reset password, and Magic Link bodies. Each body must contain `{{ .Token }}` and must not contain `{{ .ConfirmationURL }}`. Leaving the default link in any of those three is what makes the email a link instead of a code.
+
+Confirm signup. Subject: `Your Novus Arbitrium confirmation code`
+
+```html
+<h2>Confirm your email</h2>
+<p>Enter this code to finish creating your Novus Arbitrium account:</p>
+<p>{{ .Token }}</p>
+```
+
+Reset password. Subject: `Your Novus Arbitrium password reset code`
+
+```html
+<h2>Reset your password</h2>
+<p>Enter this code to choose a new password:</p>
+<p>{{ .Token }}</p>
+```
+
+Magic Link. Subject: `Your Novus Arbitrium sign-in code`
+
+```html
+<h2>Sign in</h2>
+<p>Enter this code to sign in:</p>
+<p>{{ .Token }}</p>
+```
 
 For a public site, configure **Authentication → SMTP Settings** with a sender for your domain. Supabase's built-in sender only delivers to preauthorized project-team addresses and has a low project-wide limit. Set SPF, DKIM, and DMARC with the mail provider. Review **Authentication → Rate Limits** before launch. [Supabase email setup](https://supabase.com/docs/guides/auth/auth-smtp) and [OTP guide](https://supabase.com/docs/guides/auth/auth-email-passwordless) have the current dashboard details.
 

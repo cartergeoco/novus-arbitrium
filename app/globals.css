@@ -952,37 +952,26 @@ kbd,
   max-height: 180px;
   padding-bottom: 4px;
 }
-/* Each flag keeps its own fly:hoist ratio. flag-icons art is drawn at 4:3, so it is
-   fitted to the real ratio instead of a shared box. */
+/* ISO 3166-1 country flags are 4:3 SVGs. Nepal's file leaves empty space on the fly, so that one is cropped to the pennant. */
 .nation-flag {
   --flag-h: 20px;
   --flag-ratio: 1.5;
-  width: calc(var(--flag-h) * var(--flag-ratio));
-  height: var(--flag-h);
-  display: inline-block;
-  object-fit: fill;
+  width: calc(var(--flag-h) * var(--flag-ratio) * 0.9);
+  height: calc(var(--flag-h) * 0.9);
+  display: block;
+  object-fit: contain;
   background-size: 100% 100% !important;
   background-repeat: no-repeat;
   background-position: center;
   filter: drop-shadow(0 0 0.6px #ffffff40);
   flex: 0 0 auto;
 }
-.nation-flag.fi,
-.nation-flag.fi.fis {
-  width: calc(var(--flag-h) * var(--flag-ratio));
-  height: var(--flag-h);
-  line-height: 0;
-}
-.nation-flag.fi::before {
-  content: none;
-}
 .nation-flag.large {
   --flag-h: 30px;
 }
 .nation-flag.flag-pennant {
-  overflow: hidden;
-  background-size: auto 100% !important;
-  background-position: left center !important;
+  object-fit: contain;
+  object-position: left center;
 }
 .nation-title {
   display: flex;
@@ -3762,7 +3751,6 @@ kbd,
 
 .picked-nation .nation-flag {
   --flag-h: 46px;
-  border-radius: 4px;
 }
 
 .picked-nation strong {

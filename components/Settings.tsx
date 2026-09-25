@@ -388,9 +388,9 @@ export default function Settings({
               <h4>Credits & licensing</h4>
               <p>
                 Created for Carter Geoco. Game source: GPL-3.0-only. Map:
-                Natural Earth (public domain). Leaflet, Geoman, Turf, Phosphor
-                and flag-icons provide maps, geometry, icons and vector flags;
-                fonts are Poppins and IBM Plex Mono.
+                Natural Earth (public domain). Leaflet, Geoman, Turf and Phosphor
+                provide maps, geometry and icons. Country flags are the ISO
+                3166-1 SVGs from iso3166-flags. Fonts are Poppins and IBM Plex Mono.
               </p>
               <a
                 href="https://github.com/cartergeoco/novus-arbitrium"

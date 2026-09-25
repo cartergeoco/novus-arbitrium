@@ -7,7 +7,10 @@ import { flagRatio } from "@/lib/flag/ratios";
 
 const images = new Map<string, string>();
 
-/** Real flags the flag-icons set does not ship. Public-domain SVGs. */
+/** ISO 3166-1 SVGs from iso3166-flags. Every file is drawn on a 4:3 canvas. */
+const ISO_RATIO = 4 / 3;
+
+/** Nations with no ISO 3166-1 flag. Public-domain SVGs. */
 const extraFlags: Record<string, string> = {
   SOL: "/flags/sol.svg",
   CYN: "/flags/cyn.svg",
@@ -53,13 +56,15 @@ export default function Flag({
   const extra = id ? extraFlags[id] : undefined;
   const code = iso?.toLowerCase();
   const official = Boolean(original && code && code !== "-99");
-  const ratio = extra ? (id === "SOL" ? 2 : 3 / 2) : official && code ? flagRatio(code) : 2;
+  const ratio = extra ? (id === "SOL" ? 2 : 3 / 2) : official && code === "np" ? flagRatio(code) : official ? ISO_RATIO : 2;
   const shape = `nation-flag${code === "np" ? " flag-pennant" : ""} ${large ? "large" : ""} ${className}`;
   const style = { "--flag-ratio": ratio } as CSSProperties;
   if (original && extra)
+    // eslint-disable-next-line @next/next/no-img-element
     return <img src={extra} alt="" draggable={false} className={shape} style={style} />;
   if (official && code)
-    return <span aria-label={`${iso} flag`} role="img" style={style} className={`${shape} fi fi-${code}${ratio === 1 ? " fis" : ""}`} />;
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={`/flags/iso/${code}.svg`} alt="" draggable={false} className={shape} style={style} />;
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt="Custom national flag" draggable={false} className={shape} style={style} />;
 }
