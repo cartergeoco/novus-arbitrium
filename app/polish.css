@@ -389,6 +389,7 @@
 .collection-page { width: min(calc(100% - 3rem), 1040px); padding-top: clamp(8rem, 16vh, 11rem); }
 .collection-heading { align-items: center; padding-bottom: 1.6rem; border-bottom: 1px solid var(--glass-edge); }
 .collection-heading h2 { color: var(--foreground); font-family: var(--font-bramonia), serif; font-size: clamp(3rem, 6vw, 4.75rem); font-weight: 400; line-height: .95; letter-spacing: -0.025em; text-transform: none; }
+.collection-slots { margin-top: .45rem; color: #aaa79e; font-size: .78rem; }
 .collection-primary, .collection-empty button, .collection-view-all { min-height: 46px; border-radius: var(--radius-md); border: 1px solid color-mix(in srgb, var(--gold) 42%, var(--border)); background: var(--surface-grain), var(--glass-fill); color: var(--foreground); box-shadow: inset 0 1px 0 var(--glass-edge); transition: color 160ms, background-color 180ms, border-color 180ms, box-shadow 180ms; }
 .collection-primary { padding: .7rem 1.05rem; }
 .collection-primary svg, .collection-empty button svg, .collection-view-all svg { color: var(--gold); }
@@ -662,7 +663,14 @@ input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-o
 [data-slot="tooltip-content"] > svg { display: none; }
 [data-slot="popover-content"] { z-index: 125; position: relative; border-radius: 12px; }
 .landing-icon-button[data-state="open"] { color: var(--detail-accent); }
-.account-menu { width: max-content; min-width: 218px; max-width: calc(100vw - 32px); padding: 10px; }
+.account-menu { width: min(280px, calc(100vw - 32px)); max-width: calc(100vw - 32px); padding: 10px; }
+.account-panel { display: flex; flex-direction: column; gap: .55rem; }
+.account-panel label { display: flex; flex-direction: column; gap: .25rem; font-size: .68rem; color: #aaa79e; }
+.account-panel input { min-height: 38px; padding: .4rem .6rem; border: 1px solid #3c3c3c; border-radius: 6px; background: #141414; color: #eeeae0; font: .78rem "Poppins", sans-serif; }
+.account-panel .outline-button { width: 100%; justify-content: center; }
+.account-switch { border: 0; background: transparent; color: #aaa79e; font-size: .68rem; text-align: left; padding: .2rem .35rem; }
+.account-switch:hover, .account-switch:focus-visible { color: var(--detail-accent); }
+.account-error { margin: 0; color: #e7b3a8; font-size: .68rem; }
 .account-heading { display: flex; align-items: center; gap: .75rem; padding: .35rem; margin: 0; border: 0; }
 .account-heading img { width: 40px; height: 40px; filter: invert(1); opacity: .8; }
 .account-heading h2 { font-size: .9rem; font-weight: 500; color: #eeeae0; }
