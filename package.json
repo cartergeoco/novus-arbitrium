@@ -2,6 +2,17 @@
   "name": "novus-arbitrium",
   "version": "0.1.0",
   "private": true,
+  "allowScripts": {
+    "esbuild": true,
+    "esbuild@0.18.20": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
+    "unrs-resolver": true,
+    "unrs-resolver@1.11.1": true,
+    "workerd": true,
+    "workerd@1.20260923.1": true
+  },
   "engines": {
     "node": ">=22.13.0"
   },
@@ -27,6 +38,8 @@
     "@phosphor-icons/react": "^2.1.10",
     "@shadcn/react": "^0.3.0",
     "@turf/turf": "^7.2.0",
+    "@vercel/analytics": "^2.0.1",
+    "@vercel/speed-insights": "^2.0.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "^1.1.1",

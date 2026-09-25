@@ -1,8 +1,18 @@
+import { existsSync, readFileSync } from "node:fs";
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
 import { readExecutionProfile } from "./scripts/execution-profile.mjs";
 import { sites } from "./build/sites-vite-plugin";
+
+type HostingBindings = { d1?: string; r2?: string };
+
+function readHostingConfig(): HostingBindings {
+  const file = new URL("./.openai/hosting.json", import.meta.url);
+  if (!existsSync(file)) return {};
+  return JSON.parse(readFileSync(file, "utf8")) as HostingBindings;
+}
+
+const hostingConfig = readHostingConfig();
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
