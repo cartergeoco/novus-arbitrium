@@ -78,7 +78,7 @@ async function submit(path: string, body: Record<string, unknown>) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body), cache: "no-store",
   });
-  const result = await response.json().catch(() => ({})) as { user?: Account; url?: string; error?: string };
+  const result = await response.json().catch(() => ({})) as { user?: Account; url?: string; error?: string; pending?: string; email?: string };
   if (!response.ok) throw Error(result.error || "Could not complete sign-in.");
   return result;
 }
@@ -90,16 +90,33 @@ function acceptAccount(user: Account | undefined) {
   return user;
 }
 
-export async function requestEmailCode(email: string, createAccount: boolean) {
-  await submit("/api/auth/email/start", { email, createAccount });
+export type PendingSignIn = { pending: "code" | "recovery"; email: string };
+
+function pending(result: { pending?: string; email?: string }) {
+  if ((result.pending === "code" || result.pending === "recovery") && result.email) return { pending: result.pending, email: result.email };
+  return null;
 }
 
-export async function verifyEmailCode(email: string, code: string) {
-  return acceptAccount((await submit("/api/auth/email/verify", { email, code })).user);
+export async function requestEmailCode(email: string, purpose: "signup" | "signin" | "recovery") {
+  await submit("/api/auth/email/start", { email, purpose });
 }
 
-export async function signInLegacy(username: string, password: string) {
-  return acceptAccount((await submit("/api/auth/signin", { username, password })).user);
+export async function verifyEmailCode(email: string, code: string, purpose: "signup" | "signin" | "recovery", password?: string) {
+  return acceptAccount((await submit("/api/auth/email/verify", { email, code, purpose, password })).user);
+}
+
+export async function signUp(username: string, email: string, password: string) {
+  const result = await submit("/api/auth/signup", { username, email, password });
+  return pending(result) || { user: acceptAccount(result.user) };
+}
+
+export async function signIn(username: string, password: string) {
+  const result = await submit("/api/auth/signin", { username, password });
+  return pending(result) || { user: acceptAccount(result.user) };
+}
+
+export async function requestPasswordReset(email: string) {
+  await submit("/api/auth/email/start", { email, purpose: "recovery" });
 }
 
 export async function signInWithGoogle() {

@@ -3135,7 +3135,8 @@ kbd,
 
 .settings-dialog .settings-body h3,
 .settings-dialog .settings-body h4,
-.settings-dialog label {
+.settings-dialog label,
+.account-menu label {
   color: #dedcd6;
 }
 
@@ -3156,7 +3157,9 @@ kbd,
 
 .settings-dialog input,
 .settings-dialog textarea,
-.settings-dialog .choice {
+.settings-dialog .choice,
+.account-menu input,
+.account-menu textarea {
   color: #e8e6df;
   border-color: #2a2a2a !important;
   background: #111 !important;
@@ -3165,7 +3168,11 @@ kbd,
 .settings-dialog input:focus,
 .settings-dialog input:focus-visible,
 .settings-dialog textarea:focus,
-.settings-dialog textarea:focus-visible {
+.settings-dialog textarea:focus-visible,
+.account-menu input:focus,
+.account-menu input:focus-visible,
+.account-menu textarea:focus,
+.account-menu textarea:focus-visible {
   border-color: #777 !important;
   outline: none !important;
   box-shadow: none !important;
