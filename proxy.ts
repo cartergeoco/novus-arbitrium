@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { securityHeaders } from "./lib/security-headers";
 
-/** Same-origin scripts stay allowed. A per-request nonce cannot be stamped onto prerendered pages, and strict-dynamic would ignore 'self' and block hydration. */
+/** The layout reads the request so these nonces are stamped onto the hydration scripts. */
 export function proxy(request: NextRequest) {
   if (process.env.NODE_ENV !== "production") return NextResponse.next();
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
   const csp = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     `style-src-elem 'self' 'nonce-${nonce}'`,
     "style-src-attr 'unsafe-inline'",
     "img-src 'self' data: blob:",
