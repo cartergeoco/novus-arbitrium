@@ -1,117 +1,98 @@
 import { z } from "zod";
 import { turnSchema } from "@/lib/game";
-const input = z.object({
-  provider: z.enum(["openai", "openrouter", "ollama"]),
-  key: z.string().max(512).optional(),
-  model: z.string().min(1).max(120),
-  temperature: z.number().min(0).max(2),
-  maxTokens: z.number().int().min(512).max(8192),
-  prompt: z.string().max(1500),
+import { turnOutputSchema } from "@/lib/turn-output-schema";
+import { generationFields, supportsTemperature, type Provider } from "@/lib/settings";
+import { estimateMessageTokens, estimateTurnTokens, turnMessages } from "@/lib/generation";
+import {
+  checkOrigin, connectionSchema, endpoints, fetchProvider, jsonResponse,
+  ollamaContextLength, openRouterInfo, ProviderError, providerHeaders, requestError,
+} from "@/lib/providers";
+
+const input = connectionSchema.extend({
+  ...generationFields,
   context: z.record(z.unknown()),
 });
-const instructions = `You are the world simulation engine for Novus Arbitrium, an alternate-history strategy game. Simulate plausible consequences and international reactions to the player's decision. Events are fiction. Use only the supplied nation IDs. Never decide the player nation's identity or flag. Missing province demographics are unknown; do not present guesses as facts. Keep outcomes proportional to elapsed days and difficulty. Geometry is intentionally excluded to save tokens. Use territory operations sparingly for justified wars, treaties or rebellions; rings are coarse longitude/latitude polygons clipped to the source nation by the game engine. Return ONLY a JSON object with this shape:
-{"title":"Short outcome","summary":"Consequences and tradeoffs","category":"Domestic|Diplomacy|Economy|Military|World","effects":[{"id":"nation id","stability":0,"economy":0,"influence":0,"relations":0}],"headlines":[{"title":"Regional reaction","body":"Details"}],"territories":[]}
-Each effect stat delta must be between -20 and 20 (relations -30 to 30). Max 12 effects, 4 headlines. Optional non-player effect fields: name, ideology, flag. Flag shape: {"layout":"horizontal|vertical|cross|diagonal|canton","colors":["#112233","#ddeeff","#445566"],"emblem":"none|star|sun|diamond|wreath"}. No image URLs, SVG markup, code or external resources. An optional territory entry is {"source":"id","target":"existing id, omit for a new nation","name":"new nation name","ring":[[longitude,latitude],...],"flag":{...}}; ring must be closed, have 4–100 points, no self-intersections and overlap the source. Max 3 operations. Most turns should have no territorial or identity changes.`;
+const count = z.number().int().nonnegative().safe();
+const answerSchema = z.object({
+  choices: z.array(z.object({
+    finish_reason: z.string().nullish(),
+    message: z.object({ content: z.string().nullish(), refusal: z.string().nullish() }).optional(),
+  })).optional(),
+  message: z.object({ content: z.string().nullish() }).optional(),
+  done_reason: z.string().optional(),
+  usage: z.object({ total_tokens: count.optional(), prompt_tokens: count.optional(), completion_tokens: count.optional() }).optional(),
+  prompt_eval_count: count.optional(), eval_count: count.optional(),
+});
+
 export async function POST(request: Request) {
+  let provider: Provider | undefined;
   try {
-    const origin = request.headers.get("origin");
-    if (origin && origin !== new URL(request.url).origin)
-      return Response.json({ error: "Origin not allowed." }, { status: 403 });
+    checkOrigin(request);
     const text = await request.text();
-    if (text.length > 90000)
-      return Response.json(
-        { error: "Turn context is too large." },
-        { status: 413 },
-      );
+    if (text.length > 90000) return jsonResponse({ error: "Turn context is too large. Reduce nations in context or scenario instructions in Generation." }, 413);
     const data = input.parse(JSON.parse(text));
-    if (data.provider !== "ollama" && (data.key?.length ?? 0) < 8)
-      return Response.json({ error: "Add an API key in Settings → API first." }, { status: 400 });
-    const endpoint =
-      data.provider === "openai"
-        ? "https://api.openai.com/v1/chat/completions"
-        : data.provider === "ollama"
-          ? "http://127.0.0.1:11434/api/chat"
-          : "https://openrouter.ai/api/v1/chat/completions";
-    const payload: Record<string, unknown> = {
-      model: data.model,
-      messages: [
-        {
-          role: "system",
-          content:
-            instructions +
-            (data.prompt ? "\nScenario preferences: " + data.prompt : ""),
-        },
-        { role: "user", content: JSON.stringify(data.context) },
-      ],
-      response_format: { type: "json_object" },
-    };
-    if (data.provider === "openai") {
-      payload.max_completion_tokens = data.maxTokens;
-      if (!/^(gpt-5|gpt-6|o[134])/.test(data.model))
-        payload.temperature = data.temperature;
-    } else if (data.provider === "ollama") {
+    provider = data.provider;
+    const headers = providerHeaders(data);
+    const estimate = estimateTurnTokens(data, data.context);
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(provider === "ollama" ? 180000 : 60000)]);
+    const messages = turnMessages(data.prompt, data.context);
+    const payload: Record<string, unknown> = { model: data.model, messages };
+    if (provider === "ollama") {
+      const contextLength = await ollamaContextLength(data, signal);
+      if (contextLength && estimate > contextLength)
+        throw new ProviderError("This context and response limit exceed the Ollama model's context window. Reduce them in Generation or choose a larger-context model.", 400);
       payload.stream = false;
-      payload.format = "json";
-      payload.options = { temperature: data.temperature, num_predict: data.maxTokens };
-      delete payload.response_format;
-      delete payload.max_tokens;
-    } else {
+      payload.format = turnOutputSchema(data.context);
+      // Ollama's default context can silently discard the scenario and older events.
+      payload.options = {
+        temperature: data.temperature, num_predict: data.maxTokens,
+        num_ctx: Math.min(contextLength ?? Infinity, Math.max(4096, Math.ceil(estimate / 1024) * 1024)),
+      };
+    } else if (provider === "openrouter") {
+      const info = await openRouterInfo(data, signal);
+      if (!info.connected) throw new ProviderError(info.message, 400);
+      if (info.contextLength && estimate > info.contextLength)
+        throw new ProviderError("This context and response limit exceed the selected model's context window. Reduce them in Generation.", 400);
+      if (info.maxOutputTokens && data.maxTokens > info.maxOutputTokens)
+        throw new ProviderError(`This model supports at most ${info.maxOutputTokens} output tokens. Reduce the response token limit in Generation.`, 400);
       payload.max_tokens = data.maxTokens;
-      payload.temperature = data.temperature;
+      if (info.temperature) payload.temperature = data.temperature;
+      if (info.jsonOutput) payload.response_format = { type: "json_object" };
+    } else {
+      payload.max_completion_tokens = data.maxTokens;
+      payload.response_format = { type: "json_object" };
+      if (supportsTemperature(provider, data.model)) payload.temperature = data.temperature;
     }
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (data.provider !== "ollama" && data.key) headers.Authorization = `Bearer ${data.key}`;
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(60000),
-    });
-    if (!response.ok) {
-      const message =
-        response.status === 401
-          ? "The provider rejected this API key."
-          : response.status === 429
-            ? "The provider rate limit or credit limit was reached."
-            : `The provider returned ${response.status}. Check the model and JSON-output support.`;
-      return Response.json({ error: message }, { status: 502 });
-    }
-    const answer = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-      message?: { content?: string };
-      usage?: { total_tokens?: number };
-      prompt_eval_count?: number;
-      eval_count?: number;
-    };
-    const content = data.provider === "ollama" ? answer.message?.content : answer.choices?.[0]?.message?.content;
-    if (!content) throw Error("The provider returned no usable response.");
-    const parsed = turnSchema.safeParse(
-      JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, "")),
-    );
+    const response = await fetchProvider(endpoints[provider], {
+      method: "POST", headers, body: JSON.stringify(payload), signal,
+    }, provider);
+    const raw = await response.json();
+    const answer = answerSchema.safeParse(raw);
+    if (!answer.success) return jsonResponse({ error: "The provider returned an invalid response. Your world has not changed." }, 502);
+    const result = answer.data;
+    const choice = result.choices?.[0];
+    const content = provider === "ollama" ? result.message?.content : choice?.message?.content;
+    const reported = provider === "ollama"
+      ? result.prompt_eval_count !== undefined && result.eval_count !== undefined ? result.prompt_eval_count + result.eval_count : undefined
+      : result.usage?.total_tokens ?? (result.usage?.prompt_tokens !== undefined && result.usage?.completion_tokens !== undefined
+        ? result.usage.prompt_tokens + result.usage.completion_tokens : undefined);
+    // Missing usage is estimated so the campaign still records the turn.
+    const tokens = reported ?? estimateMessageTokens(messages) + Math.max(data.maxTokens, Math.ceil((content?.length || 0) / 3));
+    const failure = (error: string) => jsonResponse({ error, tokens, usageEstimated: reported === undefined }, 422);
+    if (choice?.finish_reason === "length" || result.done_reason === "length")
+      return failure("The response token limit was reached before the turn completed. Increase it in Generation or choose a model that uses fewer reasoning tokens. Your world has not changed.");
+    if (choice?.message?.refusal || choice?.finish_reason === "content_filter")
+      return failure("The provider declined this decision. Rephrase it and try again. Your world has not changed.");
+    if (!content?.trim()) return failure("The provider returned no turn. Increase the response limit for a reasoning model or choose another model. Your world has not changed.");
+    let decoded: unknown;
+    try { decoded = JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, "")); }
+    catch { return failure("The model returned invalid JSON. Try again or choose a model with JSON output support. Your world has not changed."); }
+    const parsed = turnSchema.safeParse(decoded);
     if (!parsed.success)
-      return Response.json(
-        {
-          error:
-            "The model returned an invalid turn. The world has not changed. Try a model that supports JSON output.",
-          tokens: answer.usage?.total_tokens || (answer.prompt_eval_count || 0) + (answer.eval_count || 0),
-        },
-        { status: 422 },
-      );
-    return Response.json(
-      { result: parsed.data, tokens: answer.usage?.total_tokens || (answer.prompt_eval_count || 0) + (answer.eval_count || 0) },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+      return failure("The model returned an invalid turn. Your world has not changed. Try a model that supports JSON output.");
+    return jsonResponse({ result: parsed.data, tokens, usageEstimated: reported === undefined });
   } catch (error) {
-    return Response.json(
-      {
-        error:
-          error instanceof z.ZodError
-            ? "Invalid request settings."
-            : error instanceof Error && error.name === "TimeoutError"
-              ? "The provider timed out. Your world has not changed."
-              : "The turn could not be resolved. Your world has not changed.",
-      },
-      { status: 400 },
-    );
+    const failure = requestError(error, provider);
+    return jsonResponse({ error: failure.error }, failure.status);
   }
 }

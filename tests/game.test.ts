@@ -23,9 +23,16 @@ test("all starting countries have valid identities and geometry", () => {
   assert.equal(c.status, "active");
   for (const n of Object.values(c.nations)) {
     assert.ok(n.name);
+    assert.ok(n.ideology && n.goal && n.dossier);
+    assert.equal(n.government, "Unspecified");
     assert.ok(area(feature(n.geometry)) > 0);
     assert.ok(Number.isFinite(n.stability));
   }
+  assert.equal(c.nations.USA.ideology, "Presidential republic");
+  assert.equal(c.nations.USA.goal, "Alliance leadership");
+  assert.equal(c.nations.CHE.goal, "Armed neutrality");
+  assert.equal(c.nations.BEL.ideology, "Constitutional monarchy");
+  assert.match(c.nations.GUM.dossier || "", /United States/);
 });
 test("a decision advances the calendar and updates stats without mutating previous state", () => {
   const c = make(),
@@ -157,7 +164,7 @@ test("world context stays bounded and omits detailed border coordinates", () => 
     context = compactContext(c, "Open talks with France", defaults, null);
   assert.equal(context.nations.length, 8);
   assert.ok(context.nations.some((n) => n.id === "FRA"));
-  assert.ok(context.nations.every((n) => !("geometry" in n)));
+  assert.ok(context.nations.every((n) => !("geometry" in n) && n.dossier));
   assert.ok(JSON.stringify(context).length < 15000);
 });
 test("invalid AI output is rejected and stability zero ends an administration", () => {

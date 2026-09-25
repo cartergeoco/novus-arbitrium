@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { flagSchema, type Campaign, defaults } from "./game";
+import { flagSchema, type Campaign } from "./game";
 const finite = z.number().finite();
 const point = z.tuple([finite.min(-180).max(180), finite.min(-90).max(90)]);
 const ring = z.array(point).min(4).max(100000);
@@ -27,6 +27,10 @@ const nation = z.object({
   economy: finite.min(0).max(100),
   influence: finite.min(0).max(100),
   relations: finite.min(-100).max(100),
+  military: finite.min(0).max(100).optional(),
+  technology: finite.min(0).max(100).optional(),
+  publicSupport: finite.min(0).max(100).optional(),
+  relationships: z.record(finite.min(-100).max(100)).optional(),
   ideology: z.string().max(100),
   goal: z.string().max(200),
   government: z.string().max(100).optional(),
@@ -36,6 +40,7 @@ const nation = z.object({
   rivals: z.array(z.string().max(40)).max(100).optional(),
   claims: z.array(z.string().max(80)).max(100).optional(),
   history: z.array(z.string().max(240)).max(100).optional(),
+  dossier: z.string().max(400).optional(),
   geometry,
   original: z.boolean(),
 });
@@ -82,6 +87,8 @@ export const campaignSchema = z
       controller: z.string().max(40),
       damage: finite.min(0).max(100),
       unrest: finite.min(0).max(100),
+      identity: z.string().max(100).optional(),
+      politicalClimate: z.string().max(100).optional(),
       geometry: geometry.optional(),
       name: z.string().max(100).optional(),
       origin: z.string().max(40).optional(),
@@ -103,28 +110,4 @@ export function parseCampaign(raw: unknown): Campaign {
     throw Error("This is not a valid Novus Arbitrium alpha save.");
   return parsed.data as Campaign;
 }
-export function parseSettings(raw: unknown) {
-  const stored = raw && typeof raw === "object" && "provider" in raw && raw.provider === "demo" ? { ...raw, provider: "ollama" } : raw;
-  const schema = z.object({
-    difficulty: z.enum(["Standard", "Challenging"]),
-    turnDays: z.union([z.literal(1), z.literal(7), z.literal(30)]),
-    provider: z.enum(["ollama", "openai", "openrouter"]),
-    model: z.string().max(120),
-    temperature: finite.min(0).max(1.5),
-    maxTokens: z.number().int().min(512).max(8192),
-    tokenBudget: finite.min(2000).max(10000000),
-    contextNations: z.number().int().min(3).max(16),
-    prompt: z.string().max(1500),
-    contrast: z.boolean(),
-    motion: z.boolean(),
-    transparency: z.boolean(),
-    fontSize: z.number().int().min(16).max(20),
-    sound: z.boolean(),
-    volume: finite.min(0).max(100),
-    labels: z.boolean(),
-    texture: z.boolean().default(true),
-    highlights: z.boolean().default(true),
-  });
-  const parsed = schema.safeParse(stored);
-  return parsed.success ? parsed.data : defaults;
-}
+export { parseSettings } from "./settings";

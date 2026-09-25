@@ -1,5 +1,4 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 const directory = new URL("../public/data/regions/", import.meta.url);
 const files = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();

@@ -30,6 +30,7 @@ import { SurfaceDetails } from "@/components/SurfaceDetails";
 import { GlowWordmark } from "@/components/GlowWordmark";
 import { KeyHint } from "@/components/KeyHint";
 import { useSettings } from "@/hooks/use-settings";
+import { useApiKey } from "@/hooks/use-api-key";
 import { useAmbientState } from "@/hooks/use-ambient-state";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import {
@@ -54,8 +55,18 @@ import {
 } from "@/lib/game";
 import { campaigns, deleteCampaign, saveCampaign } from "@/lib/storage";
 import { parseCampaign } from "@/lib/validation";
+import { toast, Toaster } from "sonner";
 
 const Game = dynamic(() => import("@/components/Game"), { ssr: false });
+
+function campaignHash(id: string) {
+  return `#campaign/${encodeURIComponent(id)}`;
+}
+
+function campaignIdFromHash(hash: string) {
+  const match = /^#campaign\/([^/]+)$/.exec(hash);
+  return match ? decodeURIComponent(match[1]) : "";
+}
 
 const GREETINGS = [
   "Hello",
@@ -118,23 +129,25 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("#home");
   const [openCampaign, setOpenCampaign] = useState<Campaign | null>(null);
+  const [playing, setPlaying] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [commandsOpen, setCommandsOpen] = useState(false);
-  const [apiKey, setApiKey] = useState("");
   const [savedCampaigns, setSavedCampaigns] = useState<Campaign[]>([]);
   const [savesLoading, setSavesLoading] = useState(true);
   const [saveError, setSaveError] = useState("");
-  const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
   const [deleteId, setDeleteId] = useState("");
   const importInput = useRef<HTMLInputElement>(null);
   const menuToggle = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const [settings, setSettings] = useSettings();
+  const [apiKey, setApiKey] = useApiKey(settings.provider);
   const { hidden, reducedMotion } = useAmbientState();
   const [sort, setSort] = useState("recent");
   const [importing, setImporting] = useState(false);
+  const [renameId, setRenameId] = useState("");
+  const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
     if (reducedMotion || settings.motion) {
@@ -189,7 +202,30 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const updateSection = () => {
+      const campaignId = campaignIdFromHash(window.location.hash);
+      if (campaignId) {
+        setActiveSection("#play");
+        void campaigns().then((list) => {
+          if (cancelled) return;
+          setSavedCampaigns(list);
+          setSavesLoading(false);
+          const found = list.find((campaign) => campaign.id === campaignId) || null;
+          setOpenCampaign(found);
+          if (!found) {
+            window.history.replaceState(null, "", "#campaigns");
+            setActiveSection("#campaigns");
+          }
+        }).catch(() => {
+          if (cancelled) return;
+          setSaveError("Saved campaigns are unavailable in this browser.");
+          setSavesLoading(false);
+          setOpenCampaign(null);
+          setActiveSection("#campaigns");
+        });
+        return;
+      }
       const hash = window.location.hash === "#recent" || window.location.hash === "#library" ? "#campaigns" : window.location.hash;
       setActiveSection(MENU_ITEMS.some((item) => item.href === hash && !item.disabled) ? hash : "#home");
       setOpenCampaign(null);
@@ -199,10 +235,21 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
     window.addEventListener("popstate", updateSection);
     window.addEventListener("hashchange", updateSection);
     return () => {
+      cancelled = true;
       window.removeEventListener("popstate", updateSection);
       window.removeEventListener("hashchange", updateSection);
     };
   }, [refreshCampaigns]);
+
+  const showCampaign = useCallback((campaign: Campaign) => {
+    const hash = campaignHash(campaign.id);
+    if (window.location.hash === "#new") window.history.replaceState(null, "", hash);
+    else if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+    setOpenCampaign((current) => current?.id === campaign.id ? current : campaign);
+    setActiveSection("#play");
+    setMenuOpen(false);
+    setCommandsOpen(false);
+  }, []);
 
   const navigate = useCallback((section: string) => {
     window.history.pushState(null, "", section);
@@ -210,7 +257,6 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
     setOpenCampaign(null);
     setMenuOpen(false);
     setCommandsOpen(false);
-    setNotice("");
     window.scrollTo({ top: 0, behavior: "instant" });
     requestAnimationFrame(() => document.querySelector<HTMLElement>(".page-content")?.focus({ preventScroll: true }));
     if (section === "#campaigns" || section === "#recent" || section === "#library") {
@@ -231,12 +277,21 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
       };
       await saveCampaign(copy);
       await refreshCampaigns();
-      setNotice(`Imported “${copy.name}” into your campaigns.`);
+      toast.success(`Imported “${copy.name}” into your campaigns.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Could not import this campaign.");
+      toast.error(error instanceof Error ? error.message : "Could not import this campaign.");
     } finally {
       setImporting(false);
     }
+  }
+
+  async function renameCampaign(campaign: Campaign) {
+    const nextName = renameValue.trim();
+    setRenameId("");
+    if (!nextName || nextName === campaign.name || nextName.length > 80) return;
+    await saveCampaign({ ...campaign, name: nextName, updatedAt: new Date().toISOString() });
+    await refreshCampaigns();
+    toast.success(`Renamed the campaign to “${nextName}”.`);
   }
 
   function exportCampaign(campaign: Campaign) {
@@ -245,7 +300,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
     link.href = url;
     link.download = `novus-${campaign.name.replace(/[^a-z0-9]/gi, "-").slice(0, 50)}.json`;
     link.click();
-    setNotice(`Exported “${campaign.name}”. Keep the file somewhere safe.`);
+    toast.success(`Exported “${campaign.name}”. Keep the file somewhere safe.`);
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
@@ -303,10 +358,11 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
 
   return (
     <main
-      className={`landing-page ${activeSection === "#about" ? "landing-page-about" : ""} ${showingGame ? "landing-page-game" : ""} ${isCollection ? "landing-page-collection" : ""}`}
+      className={`landing-page ${activeSection === "#about" ? "landing-page-about" : ""} ${showingGame ? "landing-page-game" : ""} ${playing ? "landing-page-playing" : ""} ${isCollection ? "landing-page-collection" : ""}`}
       data-menu-open={menuOpen}
       data-ambient-paused={hidden || menuOpen || settingsOpen || profileOpen || commandsOpen}
     >
+      <Toaster theme="dark" position="top-center" />
       <SurfaceDetails disabled={!settings.highlights || settings.motion || settings.contrast} />
       <div className="film-grain" aria-hidden="true" />
       <a className="skip-link" href="#page-content" onClick={(event) => { event.preventDefault(); document.getElementById("page-content")?.focus(); }}>Skip to content</a>
@@ -428,15 +484,9 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
             launchMode={openCampaign ? "library" : "new"}
             initialCampaign={openCampaign || undefined}
             embedded
-            sessionApiKey={apiKey}
-            onSessionApiKeyChange={setApiKey}
-            onExit={() => {
-              if (activeSection === "#new") navigate("#campaigns");
-              else {
-                setOpenCampaign(null);
-                void refreshCampaigns();
-              }
-            }}
+            onPlayingChange={setPlaying}
+            onCampaignOpen={showCampaign}
+            onExit={() => navigate("#campaigns")}
           />
         </div>
       ) : isCollection ? (
@@ -467,7 +517,6 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
               </button>
             </div>
 
-          {notice && <div className="collection-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X /></button></div>}
           {saveError && <p className="collection-notice collection-error" role="alert">{saveError}</p>}
           <div className="collection-list" aria-live="polite">
             {savesLoading ? (
@@ -482,14 +531,31 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
                       {nation?.flag && <Flag spec={nation.flag} iso={nation.iso} original={nation.original} />}
                     </span>
                     <div className="collection-card-main">
-                      <h3>{campaign.name}</h3>
+                      {renameId === campaign.id ? (
+                        <input
+                          className="collection-rename"
+                          aria-label="Campaign name"
+                          value={renameValue}
+                          maxLength={80}
+                          autoFocus
+                          onChange={(event) => setRenameValue(event.target.value)}
+                          onBlur={() => void renameCampaign(campaign)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                            if (event.key === "Escape") setRenameId("");
+                          }}
+                        />
+                      ) : (
+                        <h3>{campaign.name}</h3>
+                      )}
                       <p>{nation?.name || "Dissolved nation"} <span>·</span> Turn {campaign.turn}</p>
                       <small>{formatDate(campaign.date)} <span aria-hidden="true">·</span> Played {new Date(campaign.updatedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</small>
                     </div>
                     <div className="collection-card-actions">
-                      <button className="collection-continue" type="button" onClick={() => setOpenCampaign(campaign)}>
+                      <button className="collection-continue" type="button" onClick={() => showCampaign(campaign)}>
                         Continue <ArrowRight aria-hidden="true" />
                       </button>
+                      <IconButton className="collection-icon" type="button" aria-label={`Rename ${campaign.name}`} onClick={() => { setRenameId(campaign.id); setRenameValue(campaign.name); }}><PencilSimple /></IconButton>
                       <IconButton className="collection-icon" type="button" aria-label={`Export ${campaign.name}`} onClick={() => exportCampaign(campaign)}><DownloadSimple /></IconButton>
                       <IconButton className="collection-icon" type="button" aria-label={`Delete ${campaign.name}`} onClick={() => setDeleteId(campaign.id)}><Trash /></IconButton>
                     </div>
@@ -565,7 +631,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
             <button
               type="button"
               className="outline-button begin-button"
-              onClick={() => savedCampaigns[0] ? setOpenCampaign(savedCampaigns[0]) : navigate("#new")}
+              onClick={() => savedCampaigns[0] ? showCampaign(savedCampaigns[0]) : navigate("#new")}
             >
               <span>{savedCampaigns[0] ? "Continue your timeline" : "Begin a timeline"}</span>
               <ArrowRight aria-hidden="true" />
@@ -587,7 +653,6 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
         onChange={setSettings}
         apiKey={apiKey}
         setApiKey={setApiKey}
-        tokens={0}
       />
 
       <Dialog open={commandsOpen} onOpenChange={setCommandsOpen}>
@@ -603,7 +668,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
                 <CommandItem onSelect={() => { setCommandsOpen(false); setProfileOpen(false); requestAnimationFrame(() => setSettingsOpen(true)); }}><GearSix />Settings</CommandItem>
                 <CommandItem onSelect={() => { setCommandsOpen(false); requestAnimationFrame(() => setProfileOpen(true)); }}><UserCircle />Local player</CommandItem>
               </CommandGroup>
-              {!!savedCampaigns.length && <CommandGroup heading="YOUR TIMELINES">{savedCampaigns.slice(0, 8).map((campaign) => <CommandItem key={campaign.id} value={`${campaign.id} ${campaign.name} ${campaign.nations[campaign.player]?.name || ""}`} onSelect={() => { setCommandsOpen(false); setOpenCampaign(campaign); }}><BookOpenText /><span>{campaign.name}</span><small>Turn {campaign.turn}</small></CommandItem>)}</CommandGroup>}
+              {!!savedCampaigns.length && <CommandGroup heading="YOUR TIMELINES">{savedCampaigns.slice(0, 8).map((campaign) => <CommandItem key={campaign.id} value={`${campaign.id} ${campaign.name} ${campaign.nations[campaign.player]?.name || ""}`} onSelect={() => showCampaign(campaign)}><BookOpenText /><span>{campaign.name}</span><small>Turn {campaign.turn}</small></CommandItem>)}</CommandGroup>}
             </CommandList>
           </Command>
           <div className="command-footer"><span><KeyHint name="up" label="Up" /><KeyHint name="down" label="Down" /> to move</span><span><KeyHint name="enter" label="Enter" /> to open</span><span><KeyHint name="esc" label="Escape" /> to close</span></div>
@@ -632,9 +697,9 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
               try {
                 await deleteCampaign(deleteId);
                 setSavedCampaigns((current) => current.filter((campaign) => campaign.id !== deleteId));
-                setNotice("Campaign deleted.");
+                toast.success("Campaign deleted.");
               } catch {
-                setNotice("Could not delete this campaign.");
+                toast.error("Could not delete this campaign.");
               } finally {
                 setDeleteId("");
               }

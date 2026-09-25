@@ -1,143 +1,88 @@
 "use client";
 import { useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { Choice } from "./Settings";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import Flag from "./Flag";
+import FlagCreator, { type FlagAI } from "./flag-creator/FlagCreator";
 import { ColorPicker } from "./ColorPicker";
-import { makeFlag, type Nation, type FlagSpec } from "@/lib/game";
-import { Shuffle, Check } from "@phosphor-icons/react";
+import { makeFlag, nationalFlag, type FlagDesign } from "@/lib/flag";
+import type { Nation } from "@/lib/game";
+import { ArrowUUpLeft, Check } from "@phosphor-icons/react";
+
 export default function IdentityEditor({
   nation,
   onSave,
   onClose,
+  ai,
 }: {
   nation: Nation;
   onSave: (n: Nation) => void;
   onClose: () => void;
+  ai?: FlagAI;
 }) {
-  const [custom, setCustom] = useState(!nation.original);
+  const hasOfficial = !!nation.iso && nation.iso !== "-99";
+  const [custom, setCustom] = useState(!nation.original || !hasOfficial);
   const [name, setName] = useState(nation.name),
     [ideology, setIdeology] = useState(nation.ideology),
-    [flag, setFlag] = useState<FlagSpec>(nation.flag),
+    [flag, setFlag] = useState<FlagDesign>(nation.flag),
     [color, setColor] = useState(nation.color);
+  const dirty = name !== nation.name || ideology !== nation.ideology || color !== nation.color || custom !== (!nation.original || !hasOfficial)
+    || JSON.stringify(flag) !== JSON.stringify(nation.flag);
+  const close = () => {
+    if (dirty && !window.confirm("Discard your unsaved changes to this national identity?")) return;
+    onClose();
+  };
   return (
-    <Dialog open onOpenChange={(b) => !b && onClose()}>
-      <DialogContent className="identity-dialog">
+    <Dialog open onOpenChange={(b) => !b && close()}>
+      <DialogContent className="identity-dialog flag-creator-dialog">
         <DialogTitle>National identity</DialogTitle>
-        <DialogDescription>
-          Your name, your principles, your colors.
-        </DialogDescription>
-        <div className="flag-preview">
-          <Flag spec={flag} iso={nation.iso} original={!custom} large />
-          <button
-            className="subtle-button"
-            onClick={() => {
-              setFlag(makeFlag(crypto.randomUUID()));
-              setCustom(true);
-            }}
-          >
-            <Shuffle />
-            Generate composition
-          </button>
-        </div>
-        <label>
-          Nation name
-          <input
-            value={name}
-            maxLength={80}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label>
-          Ideology
-          <input
-            value={ideology}
-            maxLength={100}
-            onChange={(e) => setIdeology(e.target.value)}
-          />
-        </label>
-        <div className="two-cols">
+        <DialogDescription>Your name, your principles, your colors. Build the flag from shapes, divisions and emblems.</DialogDescription>
+        <div className="identity-fields">
           <label>
-            Flag layout
-            <Choice
-              value={flag.layout}
-              onChange={(v) => {
-                setFlag({ ...flag, layout: v as FlagSpec["layout"] });
-                setCustom(true);
-              }}
-              options={[
-                "horizontal",
-                "vertical",
-                "cross",
-                "diagonal",
-                "canton",
-              ]}
-              label="Flag layout"
-            />
+            Nation name
+            <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
           </label>
           <label>
-            Emblem
-            <Choice
-              value={flag.emblem}
-              onChange={(v) => {
-                setFlag({ ...flag, emblem: v as FlagSpec["emblem"] });
-                setCustom(true);
-              }}
-              options={["none", "star", "sun", "diamond", "wreath"]}
-              label="Emblem"
-            />
+            Ideology
+            <input value={ideology} maxLength={100} onChange={(e) => setIdeology(e.target.value)} />
           </label>
-        </div>
-        <div className="color-row">
-          {flag.colors.map((c, i) => (
-            <div className="color-field" key={i}>
-              <span>Color {i + 1}</span>
-              <ColorPicker
-                label={`Flag color ${i + 1}`}
-                value={c}
-                onChange={(next) => {
-                  setFlag({
-                    ...flag,
-                    colors: flag.colors.map((x, j) =>
-                      i === j ? next : x,
-                    ),
-                  });
-                  setCustom(true);
-                }}
-              />
-            </div>
-          ))}
           <div className="color-field">
             <span>Map color</span>
-            <ColorPicker
-              label="Map color"
-              value={color}
-              onChange={setColor}
-            />
+            <ColorPicker label="Map color" value={color} onChange={setColor} />
           </div>
         </div>
-        <button
-          className="primary-button"
-          disabled={!name.trim()}
-          onClick={() =>
-            onSave({
-              ...nation,
-              name: name.trim(),
-              ideology,
-              flag,
-              color,
-              original: !custom,
-            })
-          }
-        >
-          <Check />
-          Save identity
-        </button>
+        {!custom ? (
+          <div className="official-flag">
+            <Flag spec={flag} iso={nation.iso} original large />
+            <p>This nation flies its official flag. Editing starts a custom design from a reconstruction of it.</p>
+            <button type="button" className="primary-button" onClick={() => setCustom(true)}>Customize flag</button>
+          </div>
+        ) : (
+          <FlagCreator value={flag} onChange={setFlag} ai={ai} inspiration={nationalFlag(nation.id) ?? nation.flag} nationId={nation.id} />
+        )}
+        <div className="identity-actions">
+          {custom && hasOfficial && (
+            <button type="button" className="outline-button" onClick={() => { setFlag(makeFlag(nation.id)); setCustom(false); }}>
+              <ArrowUUpLeft /> Restore official flag
+            </button>
+          )}
+          <button
+            className="primary-button"
+            disabled={!name.trim()}
+            onClick={() =>
+              onSave({
+                ...nation,
+                name: name.trim(),
+                ideology,
+                flag,
+                color,
+                original: !custom,
+              })
+            }
+          >
+            <Check />
+            Save identity
+          </button>
+        </div>
       </DialogContent>
     </Dialog>
   );

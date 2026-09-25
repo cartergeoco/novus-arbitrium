@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-const SURFACES = "[data-shine], .site-menu a:not(.disabled), .collection-card, .collection-empty, .about-grid article, .floating-panel, .decision-dock, .lab-panel, .settings-nav [role=tab], .setting-row, [data-slot=dialog-content], [data-slot=alert-dialog-content], [data-slot=popover-content], [data-slot=select-content], [data-slot=select-trigger], .primary-button, .outline-button, .account-action, .collection-primary, .collection-continue, .collection-search, .search-field, .settings-dialog input, .settings-dialog textarea, .floating-panel input, .floating-panel textarea, .decision-dock textarea, .lab-panel input, .lab-panel textarea, .color-picker input";
+const SURFACES = "[data-shine], .site-menu a:not(.disabled), .map-controls button, .nation-results button, .collection-card, .collection-empty, .about-grid article, .floating-panel, .decision-dock, .lab-panel, .conflict-card, .settings-nav [role=tab], .setting-row, [data-slot=dialog-content], [data-slot=alert-dialog-content], [data-slot=popover-content], [data-slot=select-content], [data-slot=select-trigger], .primary-button, .outline-button, .account-action, .collection-primary, .collection-continue, .collection-search, .search-field, .settings-dialog input, .settings-dialog textarea, .floating-panel input, .floating-panel textarea, .decision-dock textarea, .lab-panel input, .lab-panel textarea, .color-picker input";
 
 /** One delegated, event-driven light source, including portalled surfaces. */
 export function SurfaceDetails({ disabled }: { disabled: boolean }) {

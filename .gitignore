@@ -45,3 +45,29 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+
+# secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+hosting.json
+.openai/
+
+# local models, tunnels, and machine-specific data
+.ollama/
+ollama-models/
+.cloudflared/
+*.cloudflared.json
+cloudflared-config.yml
+
+# caches and local tooling
+.cache/
+*.log
+*.local
+.vite/

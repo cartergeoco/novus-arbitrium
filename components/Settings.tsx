@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,8 @@ import {
   Eye,
   EyeSlash,
 } from "@phosphor-icons/react";
-import type { Settings as SettingsType } from "@/lib/game";
+import { limits, normalizeNumber, selectProvider, type Settings as SettingsType } from "@/lib/settings";
+import { useProviderConnection } from "@/hooks/use-provider-connection";
 export function Choice({
   value,
   onChange,
@@ -67,7 +68,6 @@ export default function Settings({
   onChange,
   apiKey,
   setApiKey,
-  tokens,
 }: {
   open: boolean;
   onOpenChange: (b: boolean) => void;
@@ -75,10 +75,25 @@ export default function Settings({
   onChange: (s: SettingsType) => void;
   apiKey: string;
   setApiKey: (s: string) => void;
-  tokens: number;
 }) {
   const [tab, setTab] = useState("Game");
   const [showKey, setShowKey] = useState(false);
+  const modelListId = useId();
+  const connection = useProviderConnection(settings, apiKey, open && (tab === "API" || tab === "Generation"));
+  const [numberDraft, setNumberDraft] = useState<{ field: "maxTokens"; value: string } | null>(null);
+  const numberInput = (field: "maxTokens") => ({
+    value: numberDraft?.field === field ? numberDraft.value : settings[field],
+    onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+      const value = event.target.value;
+      setNumberDraft({ field, value });
+      const parsed = Number(value);
+      if (value.trim() && Number.isInteger(parsed) && parsed >= limits[field].min && parsed <= limits[field].max) set(field, parsed);
+    },
+    onBlur: (event: React.FocusEvent<HTMLInputElement>) => {
+      set(field, normalizeNumber(event.target.value, settings[field], limits[field]));
+      setNumberDraft(null);
+    },
+  });
   const set = <K extends keyof SettingsType>(key: K, v: SettingsType[K]) =>
     onChange({ ...settings, [key]: v });
   const toggle = (
@@ -101,7 +116,7 @@ export default function Settings({
     </div>
   );
   return (
-    <Dialog open={open} onOpenChange={(value) => { setShowKey(false); onOpenChange(value); }}>
+    <Dialog open={open} onOpenChange={(value) => { setShowKey(false); setNumberDraft(null); onOpenChange(value); }}>
       <DialogContent className="settings-dialog">
         <DialogTitle>Settings</DialogTitle>
         <DialogDescription className="sr-only">Game, appearance, and provider preferences.</DialogDescription>
@@ -129,7 +144,7 @@ export default function Settings({
                 Difficulty
                 <Choice
                   value={settings.difficulty}
-                  onChange={(v) => set("difficulty", v)}
+                  onChange={(v) => set("difficulty", v as SettingsType["difficulty"])}
                   options={["Standard", "Challenging"]}
                   label="Difficulty"
                 />
@@ -142,7 +157,7 @@ export default function Settings({
                 Time per decision
                 <Choice
                   value={String(settings.turnDays)}
-                  onChange={(v) => set("turnDays", Number(v))}
+                  onChange={(v) => set("turnDays", Number(v) as SettingsType["turnDays"])}
                   options={[
                     { value: "1", label: "1 day" },
                     { value: "7", label: "1 week" },
@@ -162,24 +177,18 @@ export default function Settings({
                 Response token limit
                 <input
                   type="number"
-                  min="512"
-                  max="8192"
-                  step="128"
-                  value={settings.maxTokens}
-                  onChange={(e) =>
-                    set(
-                      "maxTokens",
-                      Math.max(512, Math.min(8192, Number(e.target.value))),
-                    )
-                  }
+                  min={limits.maxTokens.min}
+                  max={limits.maxTokens.max}
+                  step="1"
+                  {...numberInput("maxTokens")}
                 />
               </label>
               <label>
                 Context: {settings.contextNations} nations
                 <Slider
                   aria-label="Nations in context"
-                  min={3}
-                  max={16}
+                  min={limits.contextNations.min}
+                  max={limits.contextNations.max}
                   step={1}
                   value={[settings.contextNations]}
                   onValueChange={(v) => set("contextNations", v[0])}
@@ -193,15 +202,18 @@ export default function Settings({
                 Temperature: {settings.temperature.toFixed(1)}
                 <Slider
                   aria-label="Temperature"
-                  min={0}
-                  max={1.5}
+                  min={limits.temperature.min}
+                  max={limits.temperature.max}
+                  disabled={!connection.temperature}
                   step={0.1}
                   value={[settings.temperature]}
                   onValueChange={(v) => set("temperature", v[0])}
                 />
               </label>
               <p className="hint">
-                Some reasoning models use their own sampling settings.
+                {connection.temperature
+                  ? "Lower values favor consistent outcomes; higher values add variety."
+                  : "This model uses its own sampling settings. Your temperature is saved for models that support it."}
               </p>
               <label>
                 Scenario instructions
@@ -221,9 +233,10 @@ export default function Settings({
                 Provider
                 <Choice
                   value={settings.provider}
-                  onChange={(v) =>
-                    set("provider", v as SettingsType["provider"])
-                  }
+                  onChange={(v) => {
+                    setShowKey(false);
+                    onChange(selectProvider(settings, v as SettingsType["provider"]));
+                  }}
                   options={[
                     { value: "ollama", label: "Ollama" },
                     { value: "openrouter", label: "OpenRouter" },
@@ -237,15 +250,22 @@ export default function Settings({
                 <input
                   value={settings.model}
                   onChange={(e) => set("model", e.target.value)}
+                  onBlur={(e) => set("model", e.target.value.trim())}
+                  list={modelListId}
+                  autoComplete="off"
+                  spellCheck={false}
                   placeholder={
                     settings.provider === "ollama"
                       ? "llama3.2"
                       : settings.provider === "openrouter"
                         ? "provider/model-name"
-                        : "Your model ID"
+                        : "gpt-4.1-mini"
                   }
                   maxLength={120}
                 />
+                <datalist id={modelListId}>
+                  {connection.models.map((model) => <option key={model} value={model} />)}
+                </datalist>
               </label>
               {settings.provider !== "ollama" && (
               <label>
@@ -254,6 +274,7 @@ export default function Settings({
                 <input
                   type={showKey ? "text" : "password"}
                   autoComplete="off"
+                  maxLength={512}
                   spellCheck={false}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
@@ -263,32 +284,12 @@ export default function Settings({
                 </span>
               </label>
               )}
-              <p className="hint">
+              <p className="hint" role="status">
+                {connection.message}{" "}
                 {settings.provider === "ollama"
-                  ? "Ollama runs on this computer at 127.0.0.1:11434. The model name must already be pulled. No API key is sent."
-                  : "Held in memory for this tab only. Sent through this site&apos;s server to your selected provider when you submit a decision. Never included in saves or exports. Provider charges apply."}
+                  ? "Ollama must run alongside this app's server at 127.0.0.1:11434. No API key is sent."
+                  : "Keys stay in memory for this tab, separately for each provider. Sent through this site's server for verification and decisions. Never included in saves or exports. Provider charges apply to generation."}
               </p>
-                  <label>
-                    Campaign token budget
-                    <input
-                      type="number"
-                      min="2000"
-                      max="10000000"
-                      step="1000"
-                      value={settings.tokenBudget}
-                      onChange={(e) =>
-                        set(
-                          "tokenBudget",
-                          Math.max(2000, Number(e.target.value)),
-                        )
-                      }
-                    />
-                  </label>
-                  <p className="hint">
-                    {tokens.toLocaleString()} reported tokens used. The next
-                    turn is blocked when its estimated cost exceeds the
-                    remaining budget.
-                  </p>
             </TabsContent>
             <TabsContent value="Appearance">
               <h3>Display</h3>

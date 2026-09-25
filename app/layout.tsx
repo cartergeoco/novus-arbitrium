@@ -8,6 +8,7 @@ import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import "flag-icons/css/flag-icons.min.css";
 import "./globals.css";
 import "./polish.css";
+import "./flag-creator.css";
 
 export const metadata: Metadata = {
   title: "Novus Arbitrium",
@@ -16,8 +17,8 @@ export const metadata: Metadata = {
     "codex-preview": "development",
   },
   icons: {
-    icon: "/novus-logo.svg",
-    shortcut: "/novus-logo.svg",
+    icon: [{ url: "/favicon.svg?v=white", type: "image/svg+xml" }],
+    shortcut: [{ url: "/favicon.svg?v=white", type: "image/svg+xml" }],
   },
 };
 

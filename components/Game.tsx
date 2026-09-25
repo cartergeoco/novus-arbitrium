@@ -1,6 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
+import { useApiKey } from "@/hooks/use-api-key";
+import { useProviderConnection } from "@/hooks/use-provider-connection";
 import { IconButton } from "@/components/IconButton";
 import dynamic from "next/dynamic";
 import type { FeatureCollection } from "geojson";
@@ -10,23 +12,19 @@ import {
   UserCircle,
   Plus,
   ArrowUpRight,
-  ArrowLeft,
   ArrowRight,
-  ArrowUp,
   Clock,
   Flag as FlagIcon,
   ChartLineUp,
   ShieldCheck,
-  Users,
-  Handshake,
   Scroll,
+  UsersThree,
   Compass,
   FloppyDisk,
   DownloadSimple,
   UploadSimple,
   Trash,
   Check,
-  MapTrifold,
   MagnifyingGlass,
   Polygon,
   ArrowCounterClockwise,
@@ -34,9 +32,7 @@ import {
   Warning,
   SpinnerGap,
   Lightning,
-  Buildings,
   PencilSimple,
-  CaretRight,
   Eye,
 } from "@phosphor-icons/react";
 import {
@@ -73,49 +69,37 @@ import {
   number,
   type Campaign,
 } from "@/lib/game";
+import { recordTerritorySplit, regionViews, type RegionAtlas } from "@/lib/world-regions";
 import { campaigns, saveCampaign, deleteCampaign } from "@/lib/storage";
+import { factions } from "@/lib/alignments";
 import { parseCampaign } from "@/lib/validation";
 const WorldMap = dynamic(() => import("./WorldMap"), {
   ssr: false,
   loading: () => <div className="map-loading">Charting the world…</div>,
 });
-const SUGGESTIONS = [
-  {
-    icon: Buildings,
-    text: "Invest in education",
-    action:
-      "Invest in public schools and teacher training, with a phased budget over the next year.",
-  },
-  {
-    icon: Handshake,
-    text: "Open trade talks",
-    action:
-      "Open diplomatic talks with neighboring countries to negotiate a mutually beneficial trade agreement.",
-  },
-  {
-    icon: ShieldCheck,
-    text: "Reform public services",
-    action:
-      "Introduce a transparent public service reform to improve healthcare access and reduce corruption.",
-  },
-];
-function useRegions(id: string) {
-  const [result, setResult] = useState<{ id: string; regions: FeatureCollection | null; failed: boolean } | null>(null);
+function ChronicleTurn({ group, latest }: { group: { turn: number; date: string; events: Campaign["history"] }; latest: boolean }) {
+  const details = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
-    if (!id || id.startsWith("NEW-")) return;
-    const controller = new AbortController();
-    fetch(`/data/regions/${id}.json`, { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw Error();
-        return r.json() as Promise<FeatureCollection>;
-      })
-      .then((regions) => { if (!controller.signal.aborted) setResult({ id, regions, failed: false }); })
-      .catch((e) => {
-        if (e.name !== "AbortError") setResult({ id, regions: null, failed: true });
-      });
-    return () => controller.abort();
-  }, [id]);
-  return result?.id === id ? result : { regions: null, failed: false };
+    if (latest && details.current) details.current.open = true;
+  }, [latest, group.turn]);
+  return (
+    <details className={`chronicle-event chronicle-turn ${latest ? "latest" : ""}`} ref={details}>
+      <summary>Turn {group.turn}</summary>
+      {group.events.map((event) => (
+        <article key={event.id}>
+          <div className="event-meta"><span>{event.category}</span></div>
+          <h3>{event.title}</h3>
+          <p>{event.body}</p>
+          {event.action && <p><b>Your decision. </b>{event.action}</p>}
+          {!!event.changes?.length && (
+            <div className="event-changes">
+              {event.changes.map((change, index) => <span key={index}>{change}</span>)}
+            </div>
+          )}
+        </article>
+      ))}
+    </details>
+  );
 }
 
 export type GameLaunchMode = "new" | "recent" | "library";
@@ -125,8 +109,8 @@ type GameProps = {
   onExit?: () => void;
   initialCampaign?: Campaign;
   embedded?: boolean;
-  sessionApiKey?: string;
-  onSessionApiKeyChange?: (key: string) => void;
+  onPlayingChange?: (playing: boolean) => void;
+  onCampaignOpen?: (campaign: Campaign) => void;
 };
 
 export default function Game({
@@ -134,25 +118,23 @@ export default function Game({
   onExit,
   initialCampaign,
   embedded = false,
-  sessionApiKey,
-  onSessionApiKeyChange,
+  onPlayingChange,
+  onCampaignOpen,
 }: GameProps = {}) {
   const [settings, setSettings] = useSettings();
-  const [localApiKey, setLocalApiKey] = useState("");
-  const apiKey = sessionApiKey ?? localApiKey;
-  const setApiKey = onSessionApiKeyChange ?? setLocalApiKey;
+  const [apiKey, setApiKey] = useApiKey(settings.provider);
   const [world, setWorld] = useState<FeatureCollection | null>(null),
+    [atlas, setAtlas] = useState<RegionAtlas | null>(null),
     [worldError, setWorldError] = useState(""),
     [saves, setSaves] = useState<Campaign[]>([]),
     [loading, setLoading] = useState(true),
     [campaign, setCampaign] = useState<Campaign | null>(initialCampaign || null),
     [creating, setCreating] = useState(launchMode === "new"),
     [selected, setSelected] = useState("USA"),
+    [selectedRegion, setSelectedRegion] = useState<string | null>(null),
     [settingsOpen, setSettingsOpen] = useState(false),
     [profileOpen, setProfileOpen] = useState(false),
-    [name, setName] = useState("A new world order"),
     [query, setQuery] = useState(""),
-    [layer, setLayer] = useState("Political"),
     [focus, setFocus] = useState(0),
     [action, setAction] = useState(""),
     [busy, setBusy] = useState(false),
@@ -165,10 +147,14 @@ export default function Game({
     [territoryName, setTerritoryName] = useState("New Republic"),
     [undo, setUndo] = useState<Campaign | null>(null),
     [deleteId, setDeleteId] = useState(""),
+    [sideView, setSideView] = useState<"chronicle" | "factions" | "nations">("chronicle"),
+    [nationSort, setNationSort] = useState("strength"),
     [mobilePanel, setMobilePanel] = useState<"nation" | "chronicle" | null>(
       null,
     );
   const panelRef = useRef<HTMLElement>(null);
+  const connection = useProviderConnection(settings, apiKey, !settingsOpen);
+  const link = connection.state;
   const actionInput = useRef<HTMLTextAreaElement>(null),
     importInput = useRef<HTMLInputElement>(null),
     requestRef = useRef<AbortController | null>(null),
@@ -182,6 +168,10 @@ export default function Game({
         return r.json() as Promise<FeatureCollection>;
       }),
       campaigns(),
+      fetch("/data/region-atlas.json").then((r) => {
+        if (!r.ok) throw Error("The regional atlas could not load.");
+        return r.json() as Promise<RegionAtlas>;
+      }),
     ]).then((results) => {
       if (!live) return;
       if (results[0].status === "fulfilled") setWorld(results[0].value);
@@ -191,6 +181,8 @@ export default function Game({
         toast.error(
           "Device storage is unavailable. Export your campaign to keep it.",
         );
+      if (results[2].status === "fulfilled") setAtlas(results[2].value);
+      else toast.error("Regional atlas unavailable. Reload to play with dynamic borders.");
       setLoading(false);
     });
     return () => {
@@ -206,8 +198,68 @@ export default function Game({
   const nations = useMemo(() => current?.nations || {}, [current?.nations]);
   const nation = nations[selected] || nations[current?.player || "USA"];
   const player = campaign?.nations[campaign.player];
-  const playerRegions = useRegions(campaign?.player || "");
-  const inspectedRegions = useRegions(creating || campaign ? selected : "");
+  const stance = !campaign || !nation
+    ? ""
+    : campaign.player === nation.id
+    ? "YOU"
+    : (campaign.wars || []).some((war) => war.status === "active" && ((war.attackers.includes(campaign.player) && war.defenders.includes(nation.id)) || (war.defenders.includes(campaign.player) && war.attackers.includes(nation.id)))) || player?.rivals?.includes(nation.id) || nation?.rivals?.includes(campaign.player)
+      ? "FOE"
+      : player?.allies?.includes(nation.id) || nation?.allies?.includes(campaign.player)
+        ? "ALLY"
+        : "";
+  const relationToPlayer = nation?.relationships?.[campaign?.player || ""] ?? nation?.relations ?? 0;
+  const chronicleTurns = useMemo(() => {
+    const groups: { turn: number; date: string; events: Campaign["history"] }[] = [];
+    for (const event of campaign?.history || []) {
+      const last = groups.at(-1);
+      if (last?.turn === event.turn) last.events.push(event);
+      else groups.push({ turn: event.turn, date: event.date, events: [event] });
+    }
+    return groups;
+  }, [campaign]);
+  const allRegions = useMemo(() => current && atlas ? regionViews(current, atlas) : [], [current, atlas]);
+  const rankedNations = useMemo(() => {
+    const list = Object.values(nations);
+    const maxPop = Math.max(1, ...list.map((n) => Math.log10(Math.max(1, n.population))));
+    const maxGdp = Math.max(1, ...list.map((n) => Math.log10(Math.max(1, n.gdp))));
+    const strength = (n: typeof list[number]) => ((n.military || 0) + (Math.log10(Math.max(1, n.population)) / maxPop) * 100 + (Math.log10(Math.max(1, n.gdp)) / maxGdp) * 100) / 3;
+    const distance = (n: typeof list[number]) => {
+      if (!player) return 0;
+      const dLat = (n.center[0] - player.center[0]) * Math.PI / 180;
+      const dLon = (n.center[1] - player.center[1]) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(player.center[0] * Math.PI / 180) * Math.cos(n.center[0] * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+      return 12742 * Math.asin(Math.min(1, Math.sqrt(a)));
+    };
+    const relation = (n: typeof list[number]) => n.id === player?.id ? 100 : n.relationships?.[player?.id || ""] ?? 0;
+    return list.map((nation) => ({ nation, strength: strength(nation), distance: distance(nation), relation: relation(nation) })).sort((a, b) => {
+      if (nationSort === "name") return a.nation.name.localeCompare(b.nation.name);
+      if (nationSort === "population") return b.nation.population - a.nation.population;
+      if (nationSort === "military") return (b.nation.military || 0) - (a.nation.military || 0);
+      if (nationSort === "gdp") return b.nation.gdp - a.nation.gdp;
+      if (nationSort === "relations") return b.relation - a.relation;
+      if (nationSort === "government") return (a.nation.government || "").localeCompare(b.nation.government || "") || a.nation.name.localeCompare(b.nation.name);
+      if (nationSort === "distance") return a.distance - b.distance;
+      return b.strength - a.strength;
+    });
+  }, [nations, nationSort, player]);
+  const visibleFactions = useMemo(() => factions.map((faction) => ({
+    ...faction,
+    present: faction.members.filter((id) => nations[id]).map((id) => nations[id]),
+  })).filter((faction) => faction.present.length > 1), [nations]);
+  const ownedRegions = useMemo(() => allRegions.filter((r) => r.state.owner === selected), [allRegions, selected]);
+  const inspectedRegionFeatures = useMemo<FeatureCollection>(() => ({
+    type: "FeatureCollection", features: ownedRegions.map((r) => ({
+      type: "Feature" as const, geometry: r.geometry,
+      properties: { ...r.properties, country: r.state.owner, controller: r.state.controller, unrest: r.state.unrest, damage: r.state.damage },
+    })),
+  }), [ownedRegions]);
+  useEffect(() => {
+    onPlayingChange?.(!creating);
+    return () => onPlayingChange?.(false);
+  }, [creating, onPlayingChange]);
+  useEffect(() => {
+    if (campaign && !creating) onCampaignOpen?.(campaign);
+  }, [campaign, creating, onCampaignOpen]);
   useEffect(() => {
     if (panelRef.current) panelRef.current.scrollTop = 0;
   }, [creating, selected, campaign?.id]);
@@ -243,7 +295,7 @@ export default function Game({
     try {
       await saveCampaign(next);
       setSaves((prev) => [next, ...prev.filter((c) => c.id !== next.id)]);
-      setSaveState("Saved on this device");
+      setSaveState("saved");
     } catch {
       setSaveState("Save failed · export a backup");
       toast.error(
@@ -254,10 +306,15 @@ export default function Game({
   const choose = (id: string) => {
     if (busy || drawing || ring) return;
     setSelected(id);
+    setSelectedRegion(null);
   };
   const start = () => {
-    if (!world) return;
-    const next = createCampaign(world, name, selected);
+    if (!world || !atlas) return;
+    const title =
+      nation?.name === "United States of America"
+        ? "United States"
+        : nation?.name || "Campaign";
+    const next = createCampaign(world, title, selected);
     persist(next);
     setCreating(false);
     setQuery("");
@@ -298,74 +355,57 @@ export default function Game({
       osc.onended = () => ctx.close();
     } catch {}
   }
-  async function submit() {
+  async function submit(overrideAction?: string) {
+    const submitted = (overrideAction ?? action).trim();
     if (
       !campaign ||
-      !action.trim() ||
+      !submitted ||
       turnLock.current ||
       campaign.status !== "active"
     )
       return;
     turnLock.current = true;
     setBusy(true);
-    const submitted = action.trim();
     let receivedTokens = 0;
     try {
-      let result,
-        tokens = 0;
       if (settings.provider !== "ollama" && !apiKey)
         throw Error("Add an API key and model in Settings → API first.");
       if (!settings.model.trim())
         throw Error("Add a model in Settings → API first.");
-      const context = compactContext(
-          campaign,
-          submitted,
-          settings,
-          playerRegions.regions,
-        );
-        const estimate =
-          Math.ceil(JSON.stringify(context).length / 3) +
-          settings.maxTokens +
-          1100;
-        if (campaign.tokens + estimate > settings.tokenBudget)
-          throw Error(
-            "This turn could exceed your campaign token budget. Increase it in API settings.",
-          );
-        const controller = new AbortController();
-        requestRef.current = controller;
-        const response = await fetch("/api/turn", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            provider: settings.provider,
-            key: settings.provider === "ollama" ? undefined : apiKey,
-            model: settings.model,
-            temperature: settings.temperature,
-            maxTokens: settings.maxTokens,
-            prompt: settings.prompt,
-            context,
-          }),
-          signal: controller.signal,
-        });
-        const data = (await response.json()) as {
-          result: unknown;
-          tokens: number;
-          error?: string;
-        };
-        if (!response.ok) {
-          if (data.tokens)
-            await persist({
-              ...campaign,
-              tokens: campaign.tokens + data.tokens,
-            });
-          throw Error(
-            data.error || "The world engine could not resolve this turn.",
-          );
-        }
-        result = data.result;
-        tokens = data.tokens;
-        receivedTokens = tokens;
-      const next = applyTurn(campaign, result, submitted, settings, tokens);
+      const context = compactContext(campaign, submitted, settings, allRegions);
+      const controller = new AbortController();
+      requestRef.current = controller;
+      const response = await fetch("/api/turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: settings.provider,
+          key: settings.provider === "ollama" ? undefined : apiKey,
+          model: settings.model,
+          temperature: settings.temperature,
+          maxTokens: settings.maxTokens,
+          prompt: settings.prompt,
+          context,
+        }),
+        signal: controller.signal,
+      });
+      const data = (await response.json()) as {
+        result: unknown;
+        tokens: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        if (data.tokens)
+          await persist({
+            ...campaign,
+            tokens: campaign.tokens + data.tokens,
+          });
+        throw Error(data.error || "The world engine could not resolve this turn.");
+      }
+      const result = data.result;
+      const tokens = data.tokens;
+      receivedTokens = tokens;
+      const next = applyTurn(campaign, result, submitted, settings, tokens, atlas);
       setUndo(null);
       await persist(next);
       setAction("");
@@ -427,9 +467,16 @@ export default function Game({
         territoryTarget === "new" ? undefined : territoryTarget,
         territoryName,
       );
+      const recipient = territoryTarget === "new"
+        ? Object.keys(ns).find((id) => !campaign.nations[id])
+        : territoryTarget;
+      const regional = atlas && recipient
+        ? recordTerritorySplit(campaign, atlas, selected, recipient, ring)
+        : {};
       const next = {
         ...campaign,
         nations: ns,
+        ...regional,
         updatedAt: new Date().toISOString(),
         history: [
           {
@@ -465,7 +512,7 @@ export default function Game({
     launchMode === "recent" ? saves.slice(0, 3) : saves;
   return (
     <main className={`${isMap ? "app-shell in-game" : "app-shell"}${embedded ? " embedded-game" : ""}`}>
-      <Toaster theme="dark" position="top-center" />
+      {!embedded && <Toaster theme="dark" position="top-center" />}
       <header className="topbar">
         <button
           className="wordmark"
@@ -558,7 +605,6 @@ export default function Game({
               onClick={() => {
                 setSelected("USA");
                 setCreating(true);
-                setName("A new world order");
               }}
             >
               <Plus weight="bold" />
@@ -625,7 +671,6 @@ export default function Game({
               onClick={() => {
                 setSelected("USA");
                 setCreating(true);
-                setName("A new world order");
               }}
             >
               {preview && (
@@ -634,7 +679,6 @@ export default function Game({
                   selected=""
                   onSelect={() => {}}
                   labels={false}
-                  layer="Political"
                   drawing={false}
                   onDraw={() => {}}
                   regions={null}
@@ -688,79 +732,55 @@ export default function Game({
           <WorldMap
             nations={nations}
             selected={selected}
-            player={campaign?.player}
             onSelect={choose}
             labels={settings.labels}
-            layer={layer}
             drawing={drawing}
             previewRing={ring}
             onDraw={(r) => {
               setRing(r);
               setDrawing(false);
             }}
-            regions={inspectedRegions.regions}
+            regions={inspectedRegionFeatures}
+            occupations={allRegions.filter((r) => r.state.controller !== r.state.owner)}
+            selectedRegion={selectedRegion}
+            focusRegion={allRegions.find((r) => r.properties.id === selectedRegion) || null}
+            onSelectRegion={(id) => {
+              const region = allRegions.find((item) => item.properties.id === id);
+              if (region) setSelected(region.state.owner);
+              setSelectedRegion(id);
+            }}
             focus={focus}
             motion={settings.motion}
           />
-          <div className="world-toolbar">
-            <button className="subtle-button" onClick={goHome} disabled={busy}>
-              <ArrowLeft />
-              {creating ? "Campaigns" : "Exit to campaigns"}
-            </button>
-            <div className="map-layer-switch">
-              <MapTrifold />
-              <Choice
-                value={layer}
-                onChange={setLayer}
-                options={["Political", "Stability", "Relations", "Regions"]}
-                label="Map layer"
-              />
-            </div>
-          </div>
           <aside
             ref={panelRef}
             className={`nation-panel floating-panel ${mobilePanel === "nation" ? "mobile-open" : ""}`}
           >
-            <div className="panel-eyebrow">
-              <span>
-                {creating
-                  ? "SELECT A NATION"
-                  : selected === campaign?.player
-                    ? "YOUR NATION"
-                    : "NATION OVERVIEW"}
-              </span>
-              <button
-                className="mobile-close icon-button"
-                aria-label="Close nation panel"
-                onClick={() => setMobilePanel(null)}
-              >
-                <X />
-              </button>
-              {!creating && <span className="mono">{nation?.id}</span>}
-            </div>
-            {creating ? (
+            {creating && (
               <>
-                <h2>
-                  Where does your
-                  <br />
-                  story begin?
-                </h2>
-                <p className="muted panel-intro">
-                  Lead any nation into an unwritten future.
-                </p>
+                <div className="panel-eyebrow">
+                  <span>SELECT A NATION</span>
+                  <button
+                    className="mobile-close icon-button"
+                    aria-label="Close nation panel"
+                    onClick={() => setMobilePanel(null)}
+                  >
+                    <X />
+                  </button>
+                </div>
+                <div className="search-field">
+                  <MagnifyingGlass />
+                  <input
+                    aria-label="Search nations"
+                    placeholder="Find a nation…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    disabled={busy || drawing || !!ring}
+                  />
+                  <KeyHint name="slash" label="slash" />
+                </div>
               </>
-            ) : null}
-            <div className="search-field">
-              <MagnifyingGlass />
-              <input
-                aria-label="Search nations"
-                placeholder="Find a nation…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                disabled={busy || drawing || !!ring}
-              />
-              <KeyHint name="slash" label="slash" />
-            </div>
+            )}
             {(query || creating) && (
               <div
                 className={`nation-results ${creating ? "creation-results" : ""}`}
@@ -769,7 +789,9 @@ export default function Game({
                   choices.map((n) => (
                     <button
                       key={n.id}
+                      type="button"
                       className={selected === n.id ? "active" : ""}
+                      aria-pressed={selected === n.id}
                       onClick={() => {
                         choose(n.id);
                         if (!creating) setQuery("");
@@ -779,7 +801,7 @@ export default function Game({
                     >
                       <Flag spec={n.flag} iso={n.iso} original={n.original} />
                       <span>{n.name}</span>
-                      {selected === n.id ? <Check /> : <CaretRight />}
+                      {selected === n.id && <Check weight="bold" />}
                     </button>
                   ))
                 ) : (
@@ -787,9 +809,9 @@ export default function Game({
                 )}
               </div>
             )}
-            {nation && (!creating || !query) && (
+            {nation && !creating && (
               <div className="nation-details">
-                <div className="nation-title">
+                <div className="nation-title docked">
                   <Flag
                     spec={nation.flag}
                     iso={nation.iso}
@@ -800,11 +822,16 @@ export default function Game({
                     <h2>{nation.name}</h2>
                     <span>
                       {nation.continent}
-                      {campaign?.player === nation.id && (
-                        <span className="you-label">YOU</span>
-                      )}
+                      {stance && <span className={`you-label${stance === "ALLY" ? " ally" : stance === "FOE" ? " foe" : ""}`}>{stance}</span>}
                     </span>
                   </div>
+                  <button
+                    className="mobile-close icon-button"
+                    aria-label="Close nation panel"
+                    onClick={() => setMobilePanel(null)}
+                  >
+                    <X />
+                  </button>
                 </div>
                 {!creating && (
                   <Tabs defaultValue="overview" className="nation-tabs">
@@ -818,170 +845,128 @@ export default function Game({
                         <p>{nation.ideology}</p>
                         <span className="eyebrow">NATIONAL PRIORITY</span>
                         <p>{nation.goal}</p>
+                        {nation.government && nation.government !== "Unspecified" && <><span className="eyebrow">GOVERNMENT</span><p>{nation.government}</p></>}
+                        {nation.leader && nation.leader !== "Unspecified" && <><span className="eyebrow">LEADERSHIP</span><p>{nation.leader}</p></>}
                       </div>
+                      {(campaign?.wars || []).filter((w) => w.status === "active" && (w.attackers.includes(selected) || w.defenders.includes(selected))).map((w) => (
+                        <div className="conflict-card" key={w.id}>
+                          <span>ACTIVE CONFLICT</span>
+                          <strong>{[...w.attackers, ...w.defenders].filter((id) => id !== selected).map((id) => nations[id]?.name || id).join(", ")}</strong>
+                          <small>{w.goal}</small>
+                        </div>
+                      ))}
                       <div className="metrics">
                         {[
-                          {
-                            icon: ShieldCheck,
-                            label: "Stability",
-                            value: nation.stability,
-                          },
-                          {
-                            icon: ChartLineUp,
-                            label: "Economy",
-                            value: nation.economy,
-                          },
-                          {
-                            icon: Compass,
-                            label: "Influence",
-                            value: nation.influence,
-                          },
-                        ].map(({ icon: Icon, label, value }) => (
-                          <div className="metric" key={label}>
-                            <div>
-                              <Icon size={17} />
-                              <span>{label}</span>
-                              <b>
-                                {value}
-                                <small>/100</small>
-                              </b>
-                            </div>
-                            <Progress
-                              aria-label={label}
-                              value={value}
-                              className={`metric-bar metric-${label.toLowerCase()}`}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                      <div className="nation-stat">
-                        <Users />
-                        <span>
-                          Population{" "}
-                          <small>{nation.populationYear} baseline</small>
-                        </span>
-                        <b>{number(nation.population)}</b>
-                      </div>
-                      <div className="nation-stat">
-                        <ChartLineUp />
-                        <span>
-                          GDP{" "}
-                          <small>
-                            {nation.gdpYear > 0
-                              ? `${nation.gdpYear} baseline`
-                              : "Source unavailable"}
-                          </small>
-                        </span>
-                        <b>
-                          {nation.gdp > 0
-                            ? "$" + number(nation.gdp * 1000000)
-                            : "Unknown"}
-                        </b>
-                      </div>
-                      {selected !== campaign?.player && (
-                        <div className="nation-stat">
-                          <Handshake />
-                          <span>Relations</span>
-                          <b
-                            className={
-                              nation.relations > 0
-                                ? "positive"
-                                : nation.relations < 0
-                                  ? "negative"
-                                  : ""
+                          { key: "stability", icon: ShieldCheck, label: "Stability", value: nation.stability },
+                          { key: "economy", icon: ChartLineUp, label: "Economy", value: nation.economy },
+                          { key: "influence", icon: Compass, label: "Influence", value: nation.influence },
+                        ].map(({ key, icon: Icon, label, value }) => {
+                          const delta = (campaign?.history || []).reduce((sum, event) => {
+                            if (event.turn !== campaign?.turn) return sum;
+                            for (const line of event.changes || []) {
+                              const match = line.match(new RegExp(`^${nation.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: ${key} ([+-]?\\d+)$`));
+                              if (match) sum += Number(match[1]);
                             }
-                          >
-                            {nation.relations > 0 ? "+" : ""}
-                            {nation.relations}
-                          </b>
-                        </div>
-                      )}
-                      <p className="metrics-caption">
-                        Ratings are simulation scores.
-                      </p>
+                            return sum;
+                          }, 0);
+                          return (
+                            <div className="metric" key={key}>
+                              <div>
+                                <Icon size={17} />
+                                <span>{label}</span>
+                                <b>{value}%</b>
+                                <small className={`stat-delta ${delta > 0 ? "positive" : delta < 0 ? "negative" : "neutral"}`}>
+                                  {delta > 0 ? `+${delta}` : delta}
+                                </small>
+                              </div>
+                              <Progress aria-label={label} value={value} className={`metric-bar metric-${key}`} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="nation-stats">
+                        {[
+                          { key: "population", label: "Population", value: number(nation.population) },
+                          ...(nation.military != null ? [{ key: "military", label: "Military Rating", value: nation.military }] : []),
+                          { key: "gdp", label: "GDP", value: `$${number(nation.gdp > 0 ? nation.gdp * 1000000 : 0)}` },
+                          ...(selected !== campaign?.player ? [{ key: "relations", label: "Relations", value: relationToPlayer }] : []),
+                        ].map((stat) => {
+                          const delta = (campaign?.history || []).reduce((sum, event) => {
+                            if (event.turn !== campaign?.turn) return sum;
+                            for (const line of event.changes || []) {
+                              const match = line.match(new RegExp(`^${nation.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: ${stat.key} ([+-]?\\d+)$`));
+                              if (match) sum += Number(match[1]);
+                            }
+                            return sum;
+                          }, 0);
+                          return (
+                            <div className="nation-stat" key={stat.key}>
+                              <span>{stat.label}</span>
+                              <b>{stat.value}</b>
+                              <small className={`stat-delta ${delta > 0 ? "positive" : delta < 0 ? "negative" : "neutral"}`}>
+                                {delta > 0 ? `+${delta}` : delta}
+                              </small>
+                            </div>
+                          );
+                        })}
+                      </div>
                       {selected === campaign?.player && (
-                        <button
-                          className="outline-button full-width"
-                          onClick={() => setIdentity(true)}
-                          disabled={busy || lab}
-                        >
-                          <PencilSimple />
-                          Edit national identity
+                        <button className="outline-button collection-import" type="button" disabled={busy || lab} onClick={() => setIdentity(true)}>
+                          <PencilSimple /> Edit national identity
                         </button>
                       )}
                     </TabsContent>
                     <TabsContent value="regions">
                       <div className="regions-heading">
                         <span>
-                          {inspectedRegions.regions?.features.length || 0}{" "}
-                          administrative regions
+                          {ownedRegions.length} regions in this timeline
                         </span>
                         <button
                           className="subtle-button"
-                          onClick={() => {
-                            setLayer("Regions");
-                            setFocus((f) => f + 1);
-                          }}
+                          onClick={() => setFocus((f) => f + 1)}
                         >
                           <Eye />
                           Show
                         </button>
                       </div>
-                      <div className="region-list">
-                        {inspectedRegions.regions?.features.map((f) => (
-                          <div key={f.properties?.id}>
-                            <span>{f.properties?.name}</span>
-                            <small>{f.properties?.type}</small>
-                          </div>
+                      <div className="nation-results region-list">
+                        {ownedRegions.map((r) => (
+                          <button key={r.properties.id} type="button" className={selectedRegion === r.properties.id ? "active" : ""} aria-pressed={selectedRegion === r.properties.id} onClick={() => setSelectedRegion(r.properties.id)}>
+                            <span>{r.properties.name}</span>
+                            <small>{r.state.controller !== r.state.owner ? `Occupied by ${nations[r.state.controller]?.name || r.state.controller}` : r.properties.type}</small>
+                          </button>
                         ))}
                       </div>
-                      <p className="hint">
-                        {inspectedRegions.failed
-                          ? "Regional data could not load. Select this nation again to retry."
-                          : nation.id.startsWith("NEW-")
-                            ? "Regional boundaries for new nations are not yet assigned."
-                            : "Geographic regions are available. Population, beliefs and regional flag profiles are planned."}
-                      </p>
                     </TabsContent>
                   </Tabs>
-                )}
-                {creating && (
-                  <div className="selection-stats">
-                    <span>
-                      <Users />
-                      {number(nation.population)} people
-                    </span>
-                    <span>
-                      <GlobeHemisphereWest />
-                      {nation.continent}
-                    </span>
-                  </div>
                 )}
               </div>
             )}
             {creating && (
               <div className="create-controls">
-                <label>
-                  Campaign name
-                  <input
-                    value={name}
-                    maxLength={80}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Name this timeline"
-                  />
-                </label>
-                <button className="primary-button full-width" onClick={start}>
-                  Lead{" "}
-                  {nation?.name === "United States of America"
-                    ? "the United States"
-                    : nation?.name}
-                  <ArrowRight />
+                {nation && (
+                  <div className="picked-nation">
+                    <Flag spec={nation.flag} iso={nation.iso} original={nation.original} large />
+                    <div>
+                      <strong>{nation.name}</strong>
+                      <span>{nation.continent}</span>
+                    </div>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="outline-button begin-button"
+                  onClick={start}
+                  disabled={!atlas || !nation}
+                >
+                  <span>
+                    Load{" "}
+                    {nation?.name === "United States of America"
+                      ? "the United States"
+                      : nation?.name}
+                  </span>
+                  <ArrowRight aria-hidden="true" />
                 </button>
-                <p className="hint">
-                  01 Jan 2026 ·{" "}
-                  {settings.provider === "ollama" ? "Ollama" : "AI engine"} ·{" "}
-                  {settings.difficulty}
-                </p>
               </div>
             )}
           </aside>
@@ -991,51 +976,73 @@ export default function Game({
                 className={`chronicle-panel floating-panel ${mobilePanel === "chronicle" ? "mobile-open" : ""}`}
               >
                 <div className="panel-eyebrow">
-                  <span>
-                    <Scroll size={16} />
-                    WORLD CHRONICLE
-                  </span>
-                  <button
-                    className="mobile-close icon-button"
-                    aria-label="Close chronicle"
-                    onClick={() => setMobilePanel(null)}
-                  >
-                    <X />
-                  </button>
-                  <span className="entry-count">{campaign.history.length}</span>
+                  <div className="side-nav" role="tablist" aria-label="World records">
+                    {([
+                      ["chronicle", "World chronicle", Scroll],
+                      ["factions", "Factions", UsersThree],
+                      ["nations", "Nations", FlagIcon],
+                    ] as const).map(([id, label, Icon]) => (
+                      <button key={id} type="button" role="tab" aria-label={label} aria-selected={sideView === id} className={sideView === id ? "active" : ""} onClick={() => setSideView(id)}>
+                        <Icon size={16} />
+                      </button>
+                    ))}
+                  </div>
+                  <span>{sideView === "chronicle" ? "CHRONICLE" : sideView === "factions" ? "FACTIONS" : "NATIONS"}</span>
+                  <button className="mobile-close icon-button" aria-label="Close world records" onClick={() => setMobilePanel(null)}><X /></button>
+                  <span className="entry-count">{sideView === "chronicle" ? chronicleTurns.length : sideView === "factions" ? visibleFactions.length : rankedNations.length}</span>
                 </div>
                 <div className="chronicle-scroll">
-                  {busy && (
+                  {sideView === "nations" && (
+                    <label className="nation-sort">
+                      <span className="sr-only">Sort nations</span>
+                      <Choice label="Sort nations" value={nationSort} onChange={setNationSort} options={[
+                        { value: "strength", label: "Strength" },
+                        { value: "relations", label: "Relations" },
+                        { value: "government", label: "Government" },
+                        { value: "distance", label: "Distance" },
+                        { value: "gdp", label: "GDP" },
+                        { value: "name", label: "A–Z" },
+                        { value: "population", label: "Population" },
+                        { value: "military", label: "Military" },
+                      ]} />
+                    </label>
+                  )}
+                  {sideView === "chronicle" && busy && (
                     <div className="pending-event">
                       <SpinnerGap className="spin" />
                       <span>The world is responding…</span>
                     </div>
                   )}
-                  {campaign.history.map((e, i) => (
-                    <article
-                      className={`chronicle-event ${i === 0 ? "latest" : ""}`}
-                      key={e.id}
-                    >
+                  {sideView === "chronicle" && chronicleTurns.map((group, i) => (
+                    <ChronicleTurn key={group.turn} group={group} latest={i === 0} />
+                  ))}
+                  {sideView === "factions" && visibleFactions.map((faction) => (
+                    <article className="chronicle-event" key={faction.id}>
                       <div className="event-meta">
-                        <span>{e.category}</span>
-                        <time>{formatDate(e.date).slice(0, 6)}</time>
+                        <span>{faction.kind}</span>
+                        <time>{faction.present.length}</time>
                       </div>
-                      <h3>{e.title}</h3>
-                      <p>{e.body}</p>
-                      {e.action && (
-                        <details>
-                          <summary>Your decision</summary>
-                          <p>{e.action}</p>
-                        </details>
-                      )}
-                      {!!e.changes?.length && (
-                        <div className="event-changes">
-                          {e.changes.slice(0, 4).map((c, j) => (
-                            <span key={j}>{c}</span>
-                          ))}
-                        </div>
-                      )}
+                      <h3>{faction.name}</h3>
+                      <p>{faction.present.slice(0, 8).map((member) => member.name).join(", ")}{faction.present.length > 8 ? ` +${faction.present.length - 8}` : ""}</p>
                     </article>
+                  ))}
+                  {sideView === "nations" && rankedNations.map(({ nation: entry, strength, distance, relation }) => (
+                    <button type="button" className={`chronicle-event nation-row ${entry.id === selected ? "latest" : ""}`} key={entry.id} onClick={() => { setSelected(entry.id); setFocus((focus) => focus + 1); }}>
+                      <Flag spec={entry.flag} iso={entry.iso} original={entry.original} />
+                      <span>
+                        <strong>{entry.name}</strong>
+                        <small>
+                          {nationSort === "population" ? number(entry.population)
+                            : nationSort === "military" ? `Military ${entry.military || 0}`
+                            : nationSort === "gdp" ? `GDP ${number(entry.gdp)}`
+                            : nationSort === "government" ? (entry.government || entry.ideology)
+                            : nationSort === "relations" ? (entry.id === player?.id ? "You" : `Relations ${relation}`)
+                            : nationSort === "distance" ? (entry.id === player?.id ? "You" : `${Math.round(distance).toLocaleString()} km`)
+                            : nationSort === "name" ? entry.continent
+                            : `Strength ${Math.round(strength)}`}
+                        </small>
+                      </span>
+                    </button>
                   ))}
                 </div>
                 <div className="chronicle-foot">
@@ -1044,21 +1051,11 @@ export default function Game({
                 </div>
               </aside>
               <div className="map-bottom-left">
-                <button
-                  className={lab ? "lab-button active" : "lab-button"}
-                  disabled={busy || campaign.status !== "active"}
-                  onClick={() => {
-                    setLab(!lab);
-                    setDrawing(false);
-                    setRing(null);
-                  }}
-                >
-                  <Polygon />
-                  World laboratory
-                </button>
                 <span className="save-caption">
                   <FloppyDisk />
-                  {saveState}
+                  {saveState === "Saving…" || saveState.startsWith("Save failed")
+                    ? saveState
+                    : `Last saved at ${new Date(campaign.updatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`}
                 </span>
               </div>
               {lab ? (
@@ -1171,23 +1168,21 @@ export default function Game({
               ) : (
                 <div className="decision-dock">
                   <div className="decision-context">
-                    <span>
+                    <span className="decision-provider" data-link={link} title={connection.message}>
                       <Lightning weight="fill" />
-                      {settings.provider === "ollama" ? "OLLAMA" : "AI ENGINE"}
+                      {settings.provider === "openai" ? "OpenAI" : settings.provider === "openrouter" ? "OpenRouter" : "Ollama"}
                     </span>
-                    <span>
-                      {campaign.status === "active"
-                        ? `NEXT TURN · +${settings.turnDays} DAYS`
-                        : campaign.status === "defeat"
-                          ? "ADMINISTRATION ENDED"
-                          : "WORLD UNITED"}
-                    </span>
+                    <span className="decision-turn">Turn {campaign.turn}</span>
+                    <span className="decision-date">{formatDate(campaign.date)}</span>
                   </div>
                   {campaign.status === "active" ? (
                     <>
                       <textarea
                         ref={actionInput}
                         aria-label="Your decision"
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
                         placeholder={`What will you do as ${player?.name || "your nation"}?`}
                         value={action}
                         disabled={busy}
@@ -1200,40 +1195,15 @@ export default function Game({
                           }
                         }}
                       />
-                      <div className="decision-bottom">
-                        <span>
-                          {action
-                            ? `${action.length} / 4000`
-                            : "Your choices will shape the world."}
-                        </span>
-                        <button
-                          className="primary-button"
-                          disabled={!action.trim() || busy}
-                          onClick={submit}
-                        >
-                          {busy ? <SpinnerGap className="spin" /> : <ArrowUp />}
-                          {busy ? "Resolving…" : "Submit decision"}
-                          <span className="key-chord"><kbd>Ctrl</kbd><KeyHint name="enter" label="Enter" /></span>
-                        </button>
-                      </div>
-                      {campaign.turn === 1 && !action && (
-                        <div className="suggestions">
-                          {SUGGESTIONS.map(
-                            ({ icon: Icon, text, action: a }) => (
-                              <button
-                                key={text}
-                                onClick={() => {
-                                  setAction(a);
-                                  actionInput.current?.focus();
-                                }}
-                              >
-                                <Icon />
-                                {text}
-                              </button>
-                            ),
-                          )}
-                        </div>
-                      )}
+                      <button
+                        type="button"
+                        className="outline-button begin-button"
+                        disabled={!action.trim() || busy}
+                        onClick={() => submit()}
+                      >
+                        <span>{busy ? "Resolving…" : "Submit decision"}</span>
+                        <ArrowRight aria-hidden="true" />
+                      </button>
                     </>
                   ) : (
                     <div className="end-state">
@@ -1267,15 +1237,6 @@ export default function Game({
               </div>
             </>
           )}
-          {creating && (
-            <div className="scenario-caption">
-              <span className="eyebrow">THE CONTEMPORARY WORLD</span>
-              <p>01 January 2026</p>
-              <span>
-                {Object.keys(nations).length} playable countries & territories
-              </span>
-            </div>
-          )}
         </section>
       )}
       <input
@@ -1296,11 +1257,17 @@ export default function Game({
         onChange={setSettings}
         apiKey={apiKey}
         setApiKey={setApiKey}
-        tokens={campaign?.tokens || 0}
       />
       {identity && player && (
         <IdentityEditor
           nation={player}
+          ai={settings.model.trim() && (settings.provider === "ollama" || apiKey) ? {
+            provider: settings.provider,
+            key: settings.provider === "ollama" ? undefined : apiKey,
+            model: settings.model,
+            temperature: settings.temperature,
+            maxTokens: settings.maxTokens,
+          } : undefined}
           onClose={() => setIdentity(false)}
           onSave={(n) => {
             if (!campaign) return;

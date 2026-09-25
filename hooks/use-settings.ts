@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { defaults, type Settings } from "@/lib/game";
-import { parseSettings } from "@/lib/validation";
+import { defaults, parseSettings, type Settings } from "@/lib/settings";
 
 const listeners = new Set<() => void>();
 let snapshot: Settings = defaults;
@@ -33,8 +32,8 @@ function subscribe(listener: () => void) {
 }
 
 function setSettings(settings: Settings) {
-  snapshot = settings;
-  try { window.localStorage.setItem("novus-settings", JSON.stringify(settings)); } catch {}
+  snapshot = parseSettings(settings);
+  try { window.localStorage.setItem("novus-settings", JSON.stringify(snapshot)); } catch {}
   listeners.forEach((notify) => notify());
 }
 

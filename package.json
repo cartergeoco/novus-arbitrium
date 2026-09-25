@@ -12,6 +12,8 @@
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
+    "flag:assets": "node scripts/build-flag-assets.mjs",
+    "flag": "tsx scripts/flag.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"
   },
@@ -48,11 +50,15 @@
     "sonner": "^2.0.8",
     "tailwind-merge": "3.6.0",
     "vaul": "^1.1.2",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.25.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
+    "@iconify-json/fa6-solid": "^1.2.4",
+    "@iconify-json/game-icons": "^1.2.4",
+    "@iconify-json/mdi": "^1.2.3",
     "@tailwindcss/postcss": "4.2.1",
     "@types/geojson": "^7946.0.16",
     "@types/leaflet": "^1.9.20",

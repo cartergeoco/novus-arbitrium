@@ -1,6 +1,7 @@
-import { area, bbox, difference, feature, featureCollection, intersect, union } from "@turf/turf";
+import { area, bbox, booleanPointInPolygon, difference, feature, featureCollection, intersect, pointOnFeature, union } from "@turf/turf";
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson";
-import type { Campaign, Land, Nation } from "./game";
+import type { Campaign, FlagSpec, Land, Nation } from "./game";
+import { deriveFlag, derivePolity, heritageFlag } from "./flags";
 
 export type RegionFeature = Feature<Polygon | MultiPolygon, {
   id: string;
@@ -15,6 +16,8 @@ export type RegionState = {
   controller: string;
   damage: number;
   unrest: number;
+  identity?: string;
+  politicalClimate?: string;
   /** Only split pieces need geometry; untouched regions use the static 2026 atlas. */
   geometry?: Land["geometry"];
   name?: string;
@@ -73,14 +76,24 @@ function moveGeometry(nations: Record<string, Nation>, source: string, target: s
   const share = Math.max(0, Math.min(1, area(cut) / area(sourceLand)));
   const people = Math.round(next[source].population * share);
   const gdp = next[source].gdp * share;
+  const forces = Math.round((next[source].military || 0) * share);
   next[target].geometry = merged.geometry;
   next[target].population += people;
   next[target].gdp += gdp;
+  next[target].military = Math.min(100, (next[target].military || 0) + forces);
   if (remainder) {
     next[source].geometry = remainder.geometry;
     next[source].population -= people;
     next[source].gdp -= gdp;
+    next[source].military = Math.max(0, (next[source].military || 0) - forces);
   } else delete next[source];
+  for (const id of [source, target]) {
+    const nation = next[id];
+    if (nation && !booleanPointInPolygon([nation.center[1], nation.center[0]], feature(nation.geometry))) {
+      const position = pointOnFeature(feature(nation.geometry)).geometry.coordinates;
+      nation.center = [position[1], position[0]];
+    }
+  }
   return next;
 }
 
@@ -114,6 +127,118 @@ export function changeRegion(
     };
   }
   return next;
+}
+
+export function changeRegionProfile(
+  c: Campaign,
+  atlas: RegionAtlas,
+  id: string,
+  delta: { unrest: number; damage: number; identity?: string; politicalClimate?: string },
+): Campaign {
+  const region = existingRegion(c, atlas, id);
+  return {
+    ...c,
+    regions: {
+      ...(c.regions || {}),
+      [id]: {
+        ...region.state,
+        unrest: Math.max(0, Math.min(100, region.state.unrest + delta.unrest)),
+        damage: Math.max(0, Math.min(100, region.state.damage + delta.damage)),
+        identity: delta.identity || region.state.identity,
+        politicalClimate: delta.politicalClimate || region.state.politicalClimate,
+      },
+    },
+  };
+}
+
+/** A successor inherits its source society and acquires actual regional land. */
+export function foundNation(
+  c: Campaign,
+  atlas: RegionAtlas,
+  options: {
+    parent: string;
+    name: string;
+    regionIds: string[];
+    ideology?: string;
+    government?: string;
+    leader?: string;
+    goal?: string;
+    flag?: FlagSpec;
+    civilWar?: boolean;
+  },
+): Campaign {
+  const parent = c.nations[options.parent];
+  if (!parent) throw Error("The parent nation no longer exists.");
+  if (!options.regionIds.length || new Set(options.regionIds).size !== options.regionIds.length)
+    throw Error("A new nation needs distinct source regions.");
+  const selected = options.regionIds.map((id) => existingRegion(c, atlas, id));
+  if (selected.some((region) => region.state.owner !== options.parent))
+    throw Error("A successor may only inherit regions its parent owns.");
+  const raw = selected.length === 1
+    ? feature(selected[0].geometry)
+    : union(featureCollection(selected.map((region) => feature(region.geometry))));
+  if (!raw) throw Error("The successor territory could not be assembled.");
+  const sourceLand = feature(parent.geometry);
+  const cut = intersect(featureCollection([sourceLand, raw]));
+  if (!cut || area(cut) < 10000) throw Error("The successor regions do not overlap their parent.");
+  const remainder = difference(featureCollection([sourceLand, cut]));
+  const share = Math.max(0, Math.min(1, area(cut) / area(sourceLand)));
+  const people = Math.round(parent.population * share);
+  const gdp = parent.gdp * share;
+  const id = "NEW-" + crypto.randomUUID().slice(0, 8);
+  const bounds = bbox(cut);
+  const nations = structuredClone(c.nations);
+  const polity = derivePolity(parent, options);
+  const parentFlag = heritageFlag(parent.id) || parent.flag;
+  nations[id] = {
+    ...parent,
+    id,
+    iso: "",
+    name: options.name.trim(),
+    original: false,
+    color: parent.color,
+    center: [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2],
+    geometry: cut.geometry,
+    population: people,
+    gdp,
+    flag: options.flag ?? deriveFlag(parentFlag, options.name + id),
+    ideology: polity.ideology,
+    government: polity.government,
+    leader: options.leader || "Unspecified",
+    goal: options.goal || (options.civilWar ? "Secure independence" : "Build a new state"),
+    allies: [],
+    rivals: options.civilWar ? [options.parent] : [],
+    relationships: { [options.parent]: options.civilWar ? -65 : -10 },
+    history: [...(parent.history || []).slice(-6), `Founded from ${parent.name} on ${c.date}`],
+    stability: Math.max(25, Math.min(70, parent.stability - (options.civilWar ? 18 : 5))),
+    influence: Math.max(5, Math.round(parent.influence * share)),
+    military: Math.max(5, Math.round((parent.military || 35) * share)),
+    publicSupport: options.civilWar ? 55 : 65,
+  };
+  if (remainder) {
+    nations[options.parent].geometry = remainder.geometry;
+    nations[options.parent].population -= people;
+    nations[options.parent].gdp -= gdp;
+    nations[options.parent].military = Math.max(0, (parent.military || 0) - (nations[id].military || 0));
+    nations[options.parent].stability = Math.max(0, parent.stability - (options.civilWar ? 12 : 4));
+    if (options.civilWar) {
+      nations[options.parent].rivals = [...new Set([...(parent.rivals || []), id])];
+      nations[options.parent].relationships = { ...(parent.relationships || {}), [id]: -65 };
+    }
+  } else delete nations[options.parent];
+  for (const nation of [nations[id], nations[options.parent]]) {
+    if (nation && !booleanPointInPolygon([nation.center[1], nation.center[0]], feature(nation.geometry))) {
+      const position = pointOnFeature(feature(nation.geometry)).geometry.coordinates;
+      nation.center = [position[1], position[0]];
+    }
+  }
+  const regions = { ...(c.regions || {}) };
+  for (const region of selected)
+    regions[region.properties.id] = { ...region.state, owner: id, controller: id, unrest: Math.min(100, region.state.unrest + (options.civilWar ? 20 : 3)) };
+  const wars = [...(c.wars || [])];
+  if (options.civilWar && nations[options.parent])
+    wars.push({ id: crypto.randomUUID(), attackers: [id], defenders: [options.parent], goal: "Determine the successor state's independence", started: c.date, status: "active" });
+  return { ...c, nations, regions, wars };
 }
 
 /** Persist every affected province when a treaty cuts across existing boundaries. */

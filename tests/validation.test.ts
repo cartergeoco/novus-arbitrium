@@ -20,7 +20,7 @@ test("older preferences gain visual defaults without resetting existing choices"
 });
 test("corrupt flags, missing identities and invalid settings are rejected", () => {
   const c = createCampaign(world, "Corrupt test", "USA");
-  c.nations.USA.flag.colors = ["https://example.com"];
+  c.nations.USA.flag.layers[0].colors = ["https://example.com"];
   assert.throws(() => parseCampaign(c));
   assert.deepEqual(
     parseSettings({ fontSize: 999, provider: "untrusted" }),
