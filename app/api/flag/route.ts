@@ -3,7 +3,7 @@ import { flagPromptGuide } from "@/lib/flag/catalog";
 import { normalizeFlag } from "@/lib/flag/normalize";
 import { generationFields, supportsTemperature, type Provider } from "@/lib/settings";
 import {
-  checkOrigin, connectionSchema, endpoints, fetchProvider, jsonResponse, openRouterInfo, ProviderError, providerHeaders, requestError,
+  checkOrigin, connectionSchema, fetchProvider, jsonResponse, openRouterInfo, ProviderError, providerEndpoint, providerHeaders, requestError,
 } from "@/lib/providers";
 
 const input = connectionSchema.extend({
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       payload.response_format = { type: "json_object" };
       if (supportsTemperature(provider, data.model)) payload.temperature = data.temperature;
     }
-    const response = await fetchProvider(endpoints[provider], { method: "POST", headers: providerHeaders(data), body: JSON.stringify(payload), signal }, provider);
+    const response = await fetchProvider(providerEndpoint(provider), { method: "POST", headers: providerHeaders(data), body: JSON.stringify(payload), signal }, provider);
     const answer = answerSchema.safeParse(await response.json());
     if (!answer.success) return jsonResponse({ error: "The provider returned an invalid response." }, 502);
     const content = provider === "ollama" ? answer.data.message?.content : answer.data.choices?.[0]?.message?.content;

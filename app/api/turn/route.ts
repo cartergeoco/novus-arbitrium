@@ -4,7 +4,7 @@ import { turnOutputSchema } from "@/lib/turn-output-schema";
 import { generationFields, supportsTemperature, type Provider } from "@/lib/settings";
 import { estimateMessageTokens, estimateTurnTokens, turnMessages } from "@/lib/generation";
 import {
-  checkOrigin, connectionSchema, endpoints, fetchProvider, jsonResponse,
+  checkOrigin, connectionSchema, fetchProvider, jsonResponse, providerEndpoint,
   ollamaContextLength, openRouterInfo, ProviderError, providerHeaders, requestError,
 } from "@/lib/providers";
 
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
       payload.response_format = { type: "json_object" };
       if (supportsTemperature(provider, data.model)) payload.temperature = data.temperature;
     }
-    const response = await fetchProvider(endpoints[provider], {
+    const response = await fetchProvider(providerEndpoint(provider), {
       method: "POST", headers, body: JSON.stringify(payload), signal,
     }, provider);
     const raw = await response.json();
