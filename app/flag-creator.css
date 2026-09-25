@@ -25,7 +25,7 @@
   border: 1px solid #333;
   border-radius: 8px;
 }
-.official-flag .nation-flag { width: 160px; height: 80px; }
+.official-flag .nation-flag { --flag-h: 72px; }
 .official-flag p { flex: 1; font-size: 0.8rem; color: #aaa69c; }
 
 .flag-creator {

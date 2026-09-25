@@ -1,5 +1,6 @@
 import { area, bbox, booleanPointInPolygon, difference, feature, featureCollection, intersect, pointOnFeature, union } from "@turf/turf";
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson";
+import { sealBorder, simplifyRing } from "./geometry";
 import type { Campaign, FlagSpec, Land, Nation } from "./game";
 import { deriveFlag, derivePolity, heritageFlag } from "./flags";
 
@@ -67,19 +68,20 @@ function moveGeometry(nations: Record<string, Nation>, source: string, target: s
   const sourceLand = feature(next[source].geometry);
   const cut = intersect(featureCollection([sourceLand, piece]));
   if (!cut || area(cut) < 10000) return null;
-  const remainder = difference(featureCollection([sourceLand, cut]));
-  const merged = union(featureCollection([feature(next[target].geometry), cut]));
+  const sealed = feature(sealBorder(cut.geometry));
+  const remainder = difference(featureCollection([sourceLand, sealed]));
+  const merged = union(featureCollection([feature(next[target].geometry), sealed]));
   if (!merged) return null;
   const share = Math.max(0, Math.min(1, area(cut) / area(sourceLand)));
   const people = Math.round(next[source].population * share);
   const gdp = next[source].gdp * share;
   const forces = Math.round((next[source].military || 0) * share);
-  next[target].geometry = merged.geometry;
+  next[target].geometry = sealBorder(merged.geometry);
   next[target].population += people;
   next[target].gdp += gdp;
   next[target].military = Math.min(100, (next[target].military || 0) + forces);
   if (remainder) {
-    next[source].geometry = remainder.geometry;
+    next[source].geometry = sealBorder(remainder.geometry);
     next[source].population -= people;
     next[source].gdp -= gdp;
     next[source].military = Math.max(0, (next[source].military || 0) - forces);
@@ -179,9 +181,10 @@ export function foundNation(
     const donorLand = feature(c.nations[donorId].geometry);
     const piece = intersect(featureCollection([donorLand, raw]));
     if (!piece || area(piece) < 10000) continue;
-    cut = cut ? union(featureCollection([cut, piece])) : piece;
-    const left = difference(featureCollection([donorLand, piece]));
-    remainders.set(donorId, left ? left.geometry : null);
+    const sealed = feature(sealBorder(piece.geometry));
+    cut = cut ? union(featureCollection([cut, sealed])) : sealed;
+    const left = difference(featureCollection([donorLand, sealed]));
+    remainders.set(donorId, left ? sealBorder(left.geometry) : null);
     shares.set(donorId, Math.max(0, Math.min(1, area(piece) / area(donorLand))));
   }
   if (!cut || area(cut) < 10000) return c;
@@ -198,7 +201,7 @@ export function foundNation(
     original: false,
     color: parent.color,
     center: [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2],
-    geometry: cut.geometry,
+    geometry: sealBorder(cut.geometry),
     population: 0,
     gdp: 0,
     flag: options.flag ?? deriveFlag(parentFlag, options.name + id),
@@ -261,8 +264,9 @@ export function recordTerritorySplit(
   target: string,
   ring: number[][],
 ): Pick<Campaign, "regions" | "removedRegions"> {
-  const closed = ring[0]?.[0] === ring.at(-1)?.[0] && ring[0]?.[1] === ring.at(-1)?.[1]
-    ? ring : [...ring, ring[0]];
+  const simplified = simplifyRing(ring);
+  const closed = simplified[0]?.[0] === simplified.at(-1)?.[0] && simplified[0]?.[1] === simplified.at(-1)?.[1]
+    ? simplified : [...simplified, simplified[0]];
   const mask = feature({ type: "Polygon", coordinates: [closed] }) as Land;
   const bounds = bbox(mask);
   const regions = { ...(c.regions || {}) };
@@ -275,18 +279,19 @@ export function recordTerritorySplit(
     try { cut = intersect(featureCollection([feature(region.geometry), mask])); }
     catch { continue; }
     if (!cut || area(cut) < 10000) continue;
-    const share = area(cut) / area(region);
+    const sealed = feature(sealBorder(cut.geometry));
+    const share = area(sealed) / area(region);
     if (share > 0.999) {
       regions[region.properties.id] = { ...region.state, owner: target, controller: target };
       continue;
     }
-    const remainder = difference(featureCollection([feature(region.geometry), cut]));
+    const remainder = difference(featureCollection([feature(region.geometry), sealed]));
     if (!remainder) continue;
     removed.add(region.properties.id);
     const base = region.properties.id + "~" + crypto.randomUUID().slice(0, 6);
     const parent = region.state.origin || region.properties.country;
-    regions[base + "a"] = { ...region.state, geometry: remainder.geometry, name: `${region.properties.name} (remainder)`, origin: parent };
-    regions[base + "b"] = { ...region.state, owner: target, controller: target, geometry: cut.geometry, name: `${region.properties.name} (settlement)`, origin: parent };
+    regions[base + "a"] = { ...region.state, geometry: sealBorder(remainder.geometry), name: `${region.properties.name} (remainder)`, origin: parent };
+    regions[base + "b"] = { ...region.state, owner: target, controller: target, geometry: sealed.geometry, name: `${region.properties.name} (settlement)`, origin: parent };
   }
   return { regions, removedRegions: [...removed] };
 }

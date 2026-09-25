@@ -1,10 +1,17 @@
 "use client";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore, type CSSProperties } from "react";
 import {
   assetVersion, designAssets, loadAssets, missingAssets, renderFlagSvg, subscribeAssets, svgDataUri, type FlagDesign,
 } from "@/lib/flag";
+import { flagRatio } from "@/lib/flag/ratios";
 
 const images = new Map<string, string>();
+
+/** Real flags the flag-icons set does not ship. Public-domain SVGs. */
+const extraFlags: Record<string, string> = {
+  SOL: "/flags/sol.svg",
+  CYN: "/flags/cyn.svg",
+};
 
 /** Data URI for a design; re-renders once any library artwork it uses has loaded. */
 export function useFlagImage(design: FlagDesign) {
@@ -30,19 +37,29 @@ export function useFlagImage(design: FlagDesign) {
 export default function Flag({
   spec,
   iso,
+  id,
   original = false,
   large = false,
   className = "",
 }: {
   spec: FlagDesign;
   iso?: string;
+  id?: string;
   original?: boolean;
   large?: boolean;
   className?: string;
 }) {
   const src = useFlagImage(spec);
-  if (original && iso && iso !== "-99")
-    return <span aria-label={`${iso} flag`} role="img" className={`nation-flag fi fi-${iso.toLowerCase()} ${large ? "large" : ""} ${className}`} />;
+  const extra = id ? extraFlags[id] : undefined;
+  const code = iso?.toLowerCase();
+  const official = Boolean(original && code && code !== "-99");
+  const ratio = extra ? (id === "SOL" ? 2 : 3 / 2) : official && code ? flagRatio(code) : 2;
+  const shape = `nation-flag${code === "np" ? " flag-pennant" : ""} ${large ? "large" : ""} ${className}`;
+  const style = { "--flag-ratio": ratio } as CSSProperties;
+  if (original && extra)
+    return <img src={extra} alt="" draggable={false} className={shape} style={style} />;
+  if (official && code)
+    return <span aria-label={`${iso} flag`} role="img" style={style} className={`${shape} fi fi-${code}${ratio === 1 ? " fis" : ""}`} />;
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={src} alt="Custom national flag" draggable={false} className={`nation-flag ${large ? "large" : ""} ${className}`} />;
+  return <img src={src} alt="Custom national flag" draggable={false} className={shape} style={style} />;
 }

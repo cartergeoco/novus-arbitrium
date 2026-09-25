@@ -624,6 +624,7 @@ export default function Game({
                     <Flag
                       spec={n?.flag || preview!.nations.USA.flag}
                       iso={n?.iso}
+                      id={n?.id}
                       original={n?.original}
                     />
                     <span className="mono">
@@ -803,7 +804,7 @@ export default function Game({
                       }}
                       disabled={busy || drawing || !!ring}
                     >
-                      <Flag spec={n.flag} iso={n.iso} original={n.original} />
+                      <Flag spec={n.flag} iso={n.iso} id={n.id} original={n.original} />
                       <span>{n.name}</span>
                       {selected === n.id && <Check weight="bold" />}
                     </button>
@@ -819,6 +820,7 @@ export default function Game({
                   <Flag
                     spec={nation.flag}
                     iso={nation.iso}
+                    id={nation.id}
                     original={nation.original}
                     large
                   />
@@ -950,7 +952,7 @@ export default function Game({
               <div className="create-controls">
                 {nation && (
                   <div className="picked-nation">
-                    <Flag spec={nation.flag} iso={nation.iso} original={nation.original} large />
+                    <Flag spec={nation.flag} iso={nation.iso} id={nation.id} original={nation.original} large />
                     <div>
                       <strong>{nation.name}</strong>
                       <span>{nation.continent}</span>
@@ -1032,7 +1034,7 @@ export default function Game({
                   ))}
                   {sideView === "nations" && rankedNations.map(({ nation: entry, strength, distance, relation }) => (
                     <button type="button" className={`chronicle-event nation-row ${entry.id === selected ? "latest" : ""}`} key={entry.id} onClick={() => { setSelected(entry.id); setFocus((focus) => focus + 1); }}>
-                      <Flag spec={entry.flag} iso={entry.iso} original={entry.original} />
+                      <Flag spec={entry.flag} iso={entry.iso} id={entry.id} original={entry.original} />
                       <span>
                         <strong>{entry.name}</strong>
                         <small>

@@ -942,37 +942,57 @@ kbd,
 }
 .nation-results button > span:not(.nation-flag) {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .nation-results .nation-flag {
-  width: 28px;
-  height: 14px;
-  flex-shrink: 0;
+  --flag-h: 14px;
 }
 .creation-results {
   max-height: 180px;
   padding-bottom: 4px;
 }
-/* Flags always occupy a 2:1 canvas; the flag itself keeps its own proportions inside it. */
+/* Each flag keeps its own fly:hoist ratio. flag-icons art is drawn at 4:3, so it is
+   fitted to the real ratio instead of a shared box. */
 .nation-flag {
-  width: 40px;
-  height: 20px;
+  --flag-h: 20px;
+  --flag-ratio: 1.5;
+  width: calc(var(--flag-h) * var(--flag-ratio));
+  height: var(--flag-h);
   display: inline-block;
-  object-fit: contain;
-  background-size: contain !important;
+  object-fit: fill;
+  background-size: 100% 100% !important;
   background-repeat: no-repeat;
   background-position: center;
   filter: drop-shadow(0 0 0.6px #ffffff40);
-  flex-shrink: 0;
+  flex: 0 0 auto;
+}
+.nation-flag.fi,
+.nation-flag.fi.fis {
+  width: calc(var(--flag-h) * var(--flag-ratio));
+  height: var(--flag-h);
+  line-height: 0;
+}
+.nation-flag.fi::before {
+  content: none;
 }
 .nation-flag.large {
-  width: 60px;
-  height: 30px;
+  --flag-h: 30px;
+}
+.nation-flag.flag-pennant {
+  overflow: hidden;
+  background-size: auto 100% !important;
+  background-position: left center !important;
 }
 .nation-title {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 23px;
+}
+.nation-title > div {
+  min-width: 0;
+  flex: 1;
 }
 .nation-title.docked {
   position: sticky;
@@ -986,9 +1006,10 @@ kbd,
 }
 .nation-title h2 {
   font-size: 1.03rem;
-  line-height: 1.45;
+  line-height: 1.25;
   font-weight: 500;
   letter-spacing: -0.025em;
+  overflow-wrap: break-word;
 }
 .nation-title > div > span {
   display: flex;
@@ -1263,9 +1284,10 @@ kbd,
   background: transparent;
   color: inherit;
 }
-.nation-row .nation-flag { width: 34px; height: 17px; flex: 0 0 auto; }
+.nation-row .nation-flag { --flag-h: 16px; }
+.nation-row > span { min-width: 0; flex: 1; }
 .nation-row strong, .nation-row small { display: block; }
-.nation-row strong { font-size: 0.8rem; font-weight: 500; color: #dce0dc; }
+.nation-row strong { font-size: 0.8rem; font-weight: 500; color: #dce0dc; overflow-wrap: break-word; }
 .nation-row small { margin-top: 2px; color: #8d8d8d; font-size: 0.65rem; }
 .entry-count {
   font-size: 0.65rem;
@@ -1740,8 +1762,7 @@ kbd,
   border-radius: 7px;
 }
 .flag-preview .nation-flag {
-  width: 132px;
-  height: 88px;
+  --flag-h: 72px;
   border-radius: 0;
 }
 .flag-preview .subtle-button {
@@ -1900,8 +1921,7 @@ kbd,
     gap: 10px;
   }
   .nation-flag.large {
-    width: 48px;
-    height: 24px;
+    --flag-h: 22px;
   }
   .nation-title h2 {
     font-size: 0.9rem;
@@ -2399,8 +2419,7 @@ kbd,
     padding: 18px;
   }
   .flag-preview .nation-flag {
-    width: 117px;
-    height: 78px;
+    --flag-h: 64px;
   }
   .color-row {
     justify-content: space-between;
@@ -2413,8 +2432,7 @@ kbd,
     font-size: 0.65rem;
   }
   .nation-panel.mobile-open .nation-flag.large {
-    width: 60px;
-    height: 30px;
+    --flag-h: 28px;
   }
   .nation-panel.mobile-open .metrics {
     max-width: 100%;
@@ -3465,7 +3483,7 @@ kbd,
 
 .collection-card {
   display: grid;
-  grid-template-columns: 2.25rem 3.6rem minmax(0, 1fr) auto;
+  grid-template-columns: 2.25rem auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 1.35rem;
   min-height: 116px;
@@ -3485,20 +3503,16 @@ kbd,
 .collection-flag {
   display: grid;
   place-items: center;
-  width: 4rem;
   height: 2rem;
-  overflow: hidden;
   border: 1px solid #333;
   border-radius: 2px;
   background: #151515;
 }
 
 .collection-flag .nation-flag {
-  width: 100%;
-  height: 100%;
+  --flag-h: calc(2rem - 2px);
   border: 0;
   border-radius: 0;
-  object-fit: contain;
 }
 
 .collection-card-main {
@@ -3736,23 +3750,28 @@ kbd,
 .picked-nation {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   margin: 0 0 4px;
-  min-height: 92px;
+  min-height: 72px;
+}
+
+.picked-nation > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .picked-nation .nation-flag {
-  width: 128px;
-  height: 64px;
+  --flag-h: 46px;
   border-radius: 4px;
 }
 
 .picked-nation strong {
   display: block;
-  font-size: 1.7rem;
+  font-size: 1.35rem;
   font-weight: 500;
   letter-spacing: -0.03em;
-  line-height: 1.05;
+  line-height: 1.15;
+  overflow-wrap: break-word;
 }
 
 .picked-nation span {

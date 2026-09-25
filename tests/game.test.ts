@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { area, feature, featureCollection, intersect } from "@turf/turf";
+import { simplifyRing } from "../lib/geometry";
 import {
   createCampaign,
   applyTurn,
@@ -158,6 +159,38 @@ test("failed territorial operations are atomic", () => {
   ];
   assert.throws(() => applyTurn(c, r, "hello", defaults));
   assert.equal(JSON.stringify(c), before);
+});
+test("a border ring drops points that sit on a straight edge", () => {
+  const ring = simplifyRing([
+    [-126, 31],
+    [-121, 31],
+    [-116, 31],
+    [-116, 43],
+    [-126, 43],
+    [-126, 31],
+  ]);
+  assert.equal(ring.length, 5);
+  assert.ok(!ring.some((point) => point[0] === -121 && point[1] === 31));
+});
+test("a faction request puts distant partners in context and expects an answer now", () => {
+  const c = make();
+  const japan = Object.values(c.nations).find((nation) => nation.name === "Japan");
+  assert.ok(japan);
+  const context = compactContext(c, "Form a faction and invite Japan", defaults, null);
+  assert.equal(context.responseExpected, true);
+  assert.ok(context.nations.some((nation) => nation.id === japan.id));
+  const ordinary = compactContext(c, "Open talks with France", defaults, null);
+  assert.equal(ordinary.responseExpected, false);
+  assert.equal(ordinary.nations.length, 8);
+});
+test("a faction order is answered by other governments in the same turn", () => {
+  const c = make();
+  const turn = demoTurn(c, "Create a faction and invite other nations", defaults);
+  assert.equal(turn.category, "Diplomacy");
+  assert.equal(turn.headlines.length, 3);
+  assert.ok(turn.headlines.every((headline) => /accepts the offer/.test(headline.body)));
+  const player = turn.effects.find((effect) => effect.id === "USA");
+  assert.equal(player?.alliesAdd?.length, 3);
 });
 test("world context stays bounded and omits detailed border coordinates", () => {
   const c = make(),
