@@ -43,13 +43,24 @@ test("occupation leaves legal borders intact, while a later treaty transfers Ari
   assert.equal(c.regions?.["USA-3520"], undefined);
 });
 
-test("occupation without war is rejected atomically", () => {
+test("occupation without a prior war still changes control", () => {
   const c = make();
   const turn = demoTurn(c, "Occupy Arizona", defaults);
-  turn.regionActions = [{ region: "USA-3520", mode: "occupy", actor: "MEX", reason: "Unexplained" }];
-  const snapshot = JSON.stringify(c);
-  assert.throws(() => applyTurn(c, turn, "Occupy Arizona", defaults, 0, atlas), /active conflict/);
-  assert.equal(JSON.stringify(c), snapshot);
+  turn.regionActions = [{ region: "USA-3520", mode: "occupy", actor: "MEX", reason: "Mexican forces cross the border and hold the province." }];
+  const next = applyTurn(c, turn, "Occupy Arizona", defaults, 0, atlas);
+  assert.equal(next.regions?.["USA-3520"].controller, "MEX");
+  assert.equal(next.regions?.["USA-3520"].owner, "USA");
+  assert.equal(next.status, "active");
+});
+
+test("a score of zero raises civil-war pressure and does not end the campaign", () => {
+  const c = make();
+  c.nations.USA.stability = 0;
+  const turn = demoTurn(c, "Hold the government together", defaults);
+  const next = applyTurn(c, turn, "Hold the government together", defaults, 0, atlas);
+  assert.equal(next.status, "active");
+  assert.ok((next.regions?.["USA-3520"].unrest || 0) > 0);
+  assert.ok(next.history.some((event) => event.title.includes("tearing itself apart")));
 });
 
 test("diplomatic ties, rivalries, and claims persist between turns", () => {

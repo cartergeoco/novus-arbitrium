@@ -21,7 +21,7 @@ import type {
   Polygon,
   MultiPolygon,
 } from "geojson";
-import { changeRegion, changeRegionProfile, foundNation, recordTerritorySplit, type RegionAtlas, type RegionState, type RegionView } from "./world-regions";
+import { changeRegion, changeRegionProfile, foundNation, recordTerritorySplit, regionViews, type RegionAtlas, type RegionState, type RegionView } from "./world-regions";
 import { deriveFlag, derivePolity, flagInputSchema, heritageFlag, makeFlag, type FlagSpec } from "./flags";
 import { flagColors } from "./flag";
 export type { FlagSpec } from "./flags";
@@ -284,21 +284,21 @@ export function transferTerritory(
   flag?: FlagSpec,
 ): Record<string, Nation> {
   const source = nations[sourceId];
-  if (!source) throw Error("Source nation no longer exists.");
+  if (!source) throw Error("That cannot happen. The selected country is not on the map.");
   const closed = ring.map((p) => [...p]);
   if (JSON.stringify(closed[0]) !== JSON.stringify(closed.at(-1)))
     closed.push([...closed[0]]);
   const mask = feature({ type: "Polygon", coordinates: [closed] }) as Land;
   if (!booleanValid(mask) || kinks(mask).features.length)
-    throw Error("Draw a valid polygon without crossing edges.");
+    throw Error("That cannot happen. The drawn border crosses itself.");
   const land = feature(source.geometry);
   const cut = intersect(featureCollection([land, mask]));
   if (!cut || area(cut) < 10000)
-    throw Error("The shape must overlap the selected nation.");
+    throw Error("That cannot happen. The drawn border does not touch the selected country.");
   if (targetId === sourceId)
-    throw Error("Choose a different receiving nation.");
+    throw Error("That cannot happen. A country cannot receive its own land in this drawing.");
   if (targetId && !nations[targetId])
-    throw Error("Receiving nation does not exist.");
+    throw Error("That cannot happen. The receiving country is not on the map.");
   const remainder = difference(featureCollection([land, cut]));
   const share = clamp(area(cut) / area(land), 0, 1),
     pop = Math.round(source.population * share),
@@ -317,7 +317,7 @@ export function transferTerritory(
   if (targetId) {
     const target = next[targetId];
     const merged = union(featureCollection([feature(target.geometry), cut]));
-    if (!merged) throw Error("Could not combine these territories.");
+    if (!merged) throw Error("That cannot happen. Those two territories cannot be joined.");
     next[targetId] = {
       ...target,
       geometry: merged.geometry,
@@ -357,8 +357,7 @@ export function transferTerritory(
   return next;
 }
 export function resolveStatus(c: Campaign): Campaign["status"] {
-  if (!c.nations[c.player] || c.nations[c.player].stability <= 0)
-    return "defeat";
+  if (!c.nations[c.player]) return "defeat";
   if (Object.keys(c.nations).length === 1) return "victory";
   return "active";
 }
@@ -377,7 +376,7 @@ export function applyTurn(
   const touched = new Set<string>();
   for (const effect of result.effects) {
     const n = nations[effect.id];
-    if (!n) throw Error("The simulation referenced an unknown nation.");
+    if (!n) continue;
     touched.add(effect.id);
     for (const key of [
       "stability",
@@ -396,8 +395,7 @@ export function applyTurn(
       }
     }
     for (const relationship of effect.relationsWith || []) {
-      if (!nations[relationship.id] || relationship.id === effect.id)
-        throw Error("A relationship referenced an unknown nation.");
+      if (!nations[relationship.id] || relationship.id === effect.id) continue;
       n.relationships ||= {};
       n.relationships[relationship.id] = clamp((n.relationships[relationship.id] || 0) + relationship.delta, -100, 100);
     }
@@ -456,13 +454,13 @@ export function applyTurn(
   }
   regional.nations = nations;
   for (const effect of result.regionEffects) {
-    if (!atlas) throw Error("Regional atlas is still loading. No turn was applied.");
+    if (!atlas) throw Error("That cannot happen. The regional map is still loading.");
     regional = changeRegionProfile(regional, atlas, effect.region, effect);
     changes.push(`${effect.region}: ${effect.cause}`);
   }
   for (const founding of result.newNations) {
     if ((founding.cause?.trim().length || 0) < 40) continue;
-    if (!atlas) throw Error("Regional atlas is still loading. No turn was applied.");
+    if (!atlas) throw Error("That cannot happen. The regional map is still loading.");
     const before = regional.nations;
     regional = foundNation(regional, atlas, { ...founding, regionIds: founding.regions });
     touched.add(founding.parent);
@@ -474,7 +472,7 @@ export function applyTurn(
   const wars = structuredClone(regional.wars || []);
   for (const conflict of result.conflicts) {
     if (!nations[conflict.attacker] || !nations[conflict.defender] || conflict.attacker === conflict.defender)
-      throw Error("A conflict referenced an unknown nation.");
+      continue;
     touched.add(conflict.attacker);
     touched.add(conflict.defender);
     const existing = wars.find((w) => w.status === "active" && (
@@ -491,15 +489,11 @@ export function applyTurn(
     }
   }
   for (const op of result.regionActions) {
-    if (!atlas) throw Error("Regional atlas is still loading. No turn was applied.");
+    if (!atlas) throw Error("That cannot happen. The regional map is still loading.");
     const region = atlas.features.find((f) => f.properties.id === op.region);
     const owner = regional.regions?.[op.region]?.owner || region?.properties.country;
     if (owner) touched.add(owner);
     touched.add(op.actor);
-    if (op.mode === "occupy" && !wars.some((w) => w.status === "active" &&
-      ((w.attackers.includes(op.actor) && w.defenders.includes(owner || "")) ||
-       (w.defenders.includes(op.actor) && w.attackers.includes(owner || "")))))
-      throw Error("Occupation requires an active conflict with the legal owner.");
     regional = changeRegion(regional, atlas, op.region, op.mode, op.actor);
     changes.push(`${op.region}: ${op.mode} by ${regional.nations[op.actor]?.name || op.actor}`);
   }
@@ -564,6 +558,30 @@ export function applyTurn(
       ...c.history,
     ],
   };
+  if (atlas) {
+    const strained = Object.values(nations).filter((n) => n.stability <= 25 || n.economy <= 10 || (n.publicSupport ?? 50) <= 15);
+    for (const nation of strained) {
+      const pressure = Math.max(0, 25 - nation.stability) + (nation.economy <= 10 ? 8 : 0) + ((nation.publicSupport ?? 50) <= 15 ? 8 : 0);
+      for (const region of regionViews(next, atlas)) {
+        if (region.state.owner !== nation.id && region.state.controller !== nation.id) continue;
+        next.regions = {
+          ...(next.regions || {}),
+          [region.properties.id]: {
+            ...region.state,
+            unrest: Math.min(100, region.state.unrest + pressure),
+            damage: Math.min(100, region.state.damage + (nation.stability <= 10 ? 6 : 0)),
+            politicalClimate: nation.stability <= 10 ? "Civil war" : region.state.politicalClimate,
+          },
+        };
+      }
+      if (nation.stability <= 10)
+        next.history = [{
+          id: crypto.randomUUID(), turn, date: day, category: "World",
+          title: `${nation.name} is tearing itself apart`,
+          body: `${nation.name} remains on the map, but a score this low means mutiny, separatist governments, and fighting inside its own borders.`,
+        }, ...next.history];
+    }
+  }
   next.status = resolveStatus(next);
   return next;
 }

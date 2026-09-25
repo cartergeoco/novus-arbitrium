@@ -56,23 +56,20 @@ export function regionViews(c: Campaign, atlas: RegionAtlas): RegionView[] {
   return views;
 }
 
-function existingRegion(c: Campaign, atlas: RegionAtlas, id: string): RegionView {
-  const region = regionViews(c, atlas).find((f) => f.properties.id === id);
-  if (!region) throw Error(`Region ${id} does not exist in this timeline.`);
-  return region;
+function existingRegion(c: Campaign, atlas: RegionAtlas, id: string): RegionView | undefined {
+  return regionViews(c, atlas).find((f) => f.properties.id === id);
 }
 
 function moveGeometry(nations: Record<string, Nation>, source: string, target: string, geometry: Land["geometry"]) {
-  if (!nations[source] || !nations[target] || source === target)
-    throw Error("Territory needs two active, different nations.");
+  if (!nations[source] || !nations[target] || source === target) return null;
   const next = structuredClone(nations);
   const piece = feature(geometry);
   const sourceLand = feature(next[source].geometry);
   const cut = intersect(featureCollection([sourceLand, piece]));
-  if (!cut || area(cut) < 10000) throw Error("This region no longer overlaps its legal owner.");
+  if (!cut || area(cut) < 10000) return null;
   const remainder = difference(featureCollection([sourceLand, cut]));
   const merged = union(featureCollection([feature(next[target].geometry), cut]));
-  if (!merged) throw Error("The new border could not be drawn.");
+  if (!merged) return null;
   const share = Math.max(0, Math.min(1, area(cut) / area(sourceLand)));
   const people = Math.round(next[source].population * share);
   const gdp = next[source].gdp * share;
@@ -106,17 +103,15 @@ export function changeRegion(
   actor: string,
 ): Campaign {
   const region = existingRegion(c, atlas, id);
+  if (!region || !c.nations[actor]) return c;
   const state = region.state;
-  if (!c.nations[actor]) throw Error("The acting nation does not exist.");
-  if (mode === "occupy" && actor === state.owner)
-    throw Error("A nation cannot occupy its own region.");
-  if (mode === "liberate" && actor !== state.owner)
-    throw Error("Only the legal owner can liberate this region.");
-  if (mode === "cede" && actor === state.owner)
-    throw Error("The recipient already owns this region.");
+  if (mode === "occupy" && actor === state.owner) return c;
+  if (mode === "cede" && actor === state.owner) return c;
   const next = { ...c, regions: { ...(c.regions || {}) } };
   if (mode === "cede") {
-    next.nations = moveGeometry(c.nations, state.owner, actor, region.geometry);
+    const moved = moveGeometry(c.nations, state.owner, actor, region.geometry);
+    if (!moved) return c;
+    next.nations = moved;
     next.regions[id] = { ...state, owner: actor, controller: actor, unrest: Math.min(100, state.unrest + 8) };
   } else {
     next.regions[id] = {
@@ -136,6 +131,7 @@ export function changeRegionProfile(
   delta: { unrest: number; damage: number; identity?: string; politicalClimate?: string },
 ): Campaign {
   const region = existingRegion(c, atlas, id);
+  if (!region) return c;
   return {
     ...c,
     regions: {
@@ -168,23 +164,27 @@ export function foundNation(
   },
 ): Campaign {
   const parent = c.nations[options.parent];
-  if (!parent) throw Error("The parent nation no longer exists.");
-  if (!options.regionIds.length || new Set(options.regionIds).size !== options.regionIds.length)
-    throw Error("A new nation needs distinct source regions.");
-  const selected = options.regionIds.map((id) => existingRegion(c, atlas, id));
-  if (selected.some((region) => region.state.owner !== options.parent))
-    throw Error("A successor may only inherit regions its parent owns.");
+  if (!parent || !options.regionIds.length || new Set(options.regionIds).size !== options.regionIds.length) return c;
+  const selected = options.regionIds.map((id) => existingRegion(c, atlas, id)).filter((region) => region !== undefined);
+  if (!selected.length) return c;
   const raw = selected.length === 1
     ? feature(selected[0].geometry)
     : union(featureCollection(selected.map((region) => feature(region.geometry))));
-  if (!raw) throw Error("The successor territory could not be assembled.");
-  const sourceLand = feature(parent.geometry);
-  const cut = intersect(featureCollection([sourceLand, raw]));
-  if (!cut || area(cut) < 10000) throw Error("The successor regions do not overlap their parent.");
-  const remainder = difference(featureCollection([sourceLand, cut]));
-  const share = Math.max(0, Math.min(1, area(cut) / area(sourceLand)));
-  const people = Math.round(parent.population * share);
-  const gdp = parent.gdp * share;
+  if (!raw) return c;
+  const donors = [...new Set(selected.map((region) => region.state.owner))].filter((id) => c.nations[id]);
+  let cut = null as ReturnType<typeof intersect>;
+  const remainders = new Map<string, Land["geometry"] | null>();
+  const shares = new Map<string, number>();
+  for (const donorId of donors) {
+    const donorLand = feature(c.nations[donorId].geometry);
+    const piece = intersect(featureCollection([donorLand, raw]));
+    if (!piece || area(piece) < 10000) continue;
+    cut = cut ? union(featureCollection([cut, piece])) : piece;
+    const left = difference(featureCollection([donorLand, piece]));
+    remainders.set(donorId, left ? left.geometry : null);
+    shares.set(donorId, Math.max(0, Math.min(1, area(piece) / area(donorLand))));
+  }
+  if (!cut || area(cut) < 10000) return c;
   const id = "NEW-" + crypto.randomUUID().slice(0, 8);
   const bounds = bbox(cut);
   const nations = structuredClone(c.nations);
@@ -199,8 +199,8 @@ export function foundNation(
     color: parent.color,
     center: [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2],
     geometry: cut.geometry,
-    population: people,
-    gdp,
+    population: 0,
+    gdp: 0,
     flag: options.flag ?? deriveFlag(parentFlag, options.name + id),
     ideology: polity.ideology,
     government: polity.government,
@@ -211,21 +211,33 @@ export function foundNation(
     relationships: { [options.parent]: options.civilWar ? -65 : -10 },
     history: [...(parent.history || []).slice(-6), `Founded from ${parent.name} on ${c.date}`],
     stability: Math.max(25, Math.min(70, parent.stability - (options.civilWar ? 18 : 5))),
-    influence: Math.max(5, Math.round(parent.influence * share)),
-    military: Math.max(5, Math.round((parent.military || 35) * share)),
+    influence: Math.max(5, Math.round(parent.influence * Math.max(...shares.values(), 0))),
+    military: 0,
     publicSupport: options.civilWar ? 55 : 65,
   };
-  if (remainder) {
-    nations[options.parent].geometry = remainder.geometry;
-    nations[options.parent].population -= people;
-    nations[options.parent].gdp -= gdp;
-    nations[options.parent].military = Math.max(0, (parent.military || 0) - (nations[id].military || 0));
-    nations[options.parent].stability = Math.max(0, parent.stability - (options.civilWar ? 12 : 4));
-    if (options.civilWar) {
-      nations[options.parent].rivals = [...new Set([...(parent.rivals || []), id])];
-      nations[options.parent].relationships = { ...(parent.relationships || {}), [id]: -65 };
+  for (const [donorId, share] of shares) {
+    const donor = nations[donorId];
+    const people = Math.round(donor.population * share);
+    const gdp = donor.gdp * share;
+    const forces = Math.max(1, Math.round((donor.military || 35) * share));
+    nations[id].population += people;
+    nations[id].gdp += gdp;
+    nations[id].military = Math.min(100, (nations[id].military || 0) + forces);
+    const left = remainders.get(donorId);
+    if (left === null) delete nations[donorId];
+    else if (left && nations[donorId]) {
+      nations[donorId].geometry = left;
+      nations[donorId].population -= people;
+      nations[donorId].gdp -= gdp;
+      nations[donorId].military = Math.max(0, (donor.military || 0) - forces);
+      if (donorId === options.parent)
+        nations[donorId].stability = Math.max(0, donor.stability - (options.civilWar ? 12 : 4));
     }
-  } else delete nations[options.parent];
+  }
+  if (options.civilWar && nations[options.parent]) {
+    nations[options.parent].rivals = [...new Set([...(nations[options.parent].rivals || []), id])];
+    nations[options.parent].relationships = { ...(nations[options.parent].relationships || {}), [id]: -65 };
+  }
   for (const nation of [nations[id], nations[options.parent]]) {
     if (nation && !booleanPointInPolygon([nation.center[1], nation.center[0]], feature(nation.geometry))) {
       const position = pointOnFeature(feature(nation.geometry)).geometry.coordinates;

@@ -1215,7 +1215,7 @@ export default function Game({
                       </h3>
                       <p>
                         {campaign.status === "defeat"
-                          ? "Your nation has dissolved or lost domestic stability. Your chronicle remains available."
+                          ? "Your country is no longer on the map. Your chronicle remains available."
                           : "Every remaining territory is united under your administration."}
                       </p>
                       <button className="primary-button" onClick={goHome}>

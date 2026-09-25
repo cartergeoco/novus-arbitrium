@@ -167,11 +167,12 @@ test("world context stays bounded and omits detailed border coordinates", () => 
   assert.ok(context.nations.every((n) => !("geometry" in n) && n.dossier));
   assert.ok(JSON.stringify(context).length < 15000);
 });
-test("invalid AI output is rejected and stability zero ends an administration", () => {
+test("invalid AI output is rejected and a missing country ends the campaign", () => {
   assert.equal(turnSchema.safeParse({ title: "bad" }).success, false);
   const c = make();
   c.nations.USA.stability = 0;
-  assert.equal(resolveStatus(c), "defeat");
+  c.nations.USA.economy = 0;
+  assert.equal(resolveStatus(c), "active");
   delete c.nations.USA;
   assert.equal(resolveStatus(c), "defeat");
 });

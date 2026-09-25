@@ -355,8 +355,10 @@ export default function Settings({
               </h3>
               <p>
                 Choose a nation, describe a decision, and advance your timeline.
-                Click countries to inspect them. Your administration ends if
-                your nation dissolves or stability reaches zero.
+                Click countries to inspect them. A score of zero does not end
+                the campaign. It brings civil wars, mutinies, and shortages.
+                The campaign ends only if your country leaves the map, or if
+                one flag covers the world.
               </p>
               <div className="help-keys">
                 <span>Quick navigation</span>
