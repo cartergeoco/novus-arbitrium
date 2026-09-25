@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { securityHeaders } from "./lib/security-headers";
 
-/** Per-response CSP nonce for framework hydration and inline styles. */
+/** Same-origin scripts stay allowed. A per-request nonce cannot be stamped onto prerendered pages, and strict-dynamic would ignore 'self' and block hydration. */
 export function proxy(request: NextRequest) {
   if (process.env.NODE_ENV !== "production") return NextResponse.next();
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
   const csp = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    `script-src 'self' 'nonce-${nonce}'`,
     `style-src-elem 'self' 'nonce-${nonce}'`,
     "style-src-attr 'unsafe-inline'",
     "img-src 'self' data: blob:",
