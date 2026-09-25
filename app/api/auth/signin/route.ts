@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     }
     if (signedIn.error || !signedIn.data.user) {
       if (/not confirmed/i.test(signedIn.error?.message || "")) return sendSignInCode(email, null);
-      return privateJson({ error: "Username or password is incorrect." }, 401);
+      return privateJson({ error: "Username, email, or password is incorrect." }, 401);
     }
     if (isLegacyAccountEmail(email)) return privateJson({ user: accountView(signedIn.data.user) });
     return sendSignInCode(email, signedIn.data.user);
