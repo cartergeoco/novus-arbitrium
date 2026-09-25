@@ -49,7 +49,7 @@ export default function AccountMenu({
             <p>{campaignCount} of {CAMPAIGN_SLOTS} campaign slots</p>
           </div>
         </div>
-        <button className="account-action" type="button" onClick={() => void signOut()}>Sign out</button>
+        <button className="account-action" type="button" onClick={() => { setCreating(false); setPassword(""); void signOut(); }}>Sign out</button>
       </div>
     );
   }
