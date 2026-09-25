@@ -53,7 +53,9 @@ import {
   formatDate,
   type Campaign,
 } from "@/lib/game";
-import { campaigns, deleteCampaign, saveCampaign } from "@/lib/storage";
+import AccountMenu from "@/components/AccountMenu";
+import { CAMPAIGN_SLOTS } from "@/lib/accounts";
+import { campaigns, currentAccount, deleteCampaign, saveCampaign } from "@/lib/saves";
 import { parseCampaign } from "@/lib/validation";
 import { toast, Toaster } from "sonner";
 
@@ -252,6 +254,10 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
   }, []);
 
   const navigate = useCallback((section: string) => {
+    if (section === "#new" && currentAccount() && savedCampaigns.length >= CAMPAIGN_SLOTS) {
+      toast.error("You already have 5 campaigns. Delete one to free a slot.");
+      return;
+    }
     window.history.pushState(null, "", section);
     setActiveSection(section);
     setOpenCampaign(null);
@@ -263,7 +269,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
       setSavesLoading(true);
       void refreshCampaigns();
     }
-  }, [refreshCampaigns]);
+  }, [refreshCampaigns, savedCampaigns.length]);
 
   async function importCampaign(file: File) {
     setImporting(true);
@@ -399,8 +405,8 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
             <PopoverTrigger asChild>
               <button className="landing-icon-button" type="button" aria-label="Account"><UserCircle weight="fill" /></button>
             </PopoverTrigger>
-            <PopoverContent className="account-menu" align="end" sideOffset={12} collisionPadding={16} aria-labelledby="account-title">
-              <div className="account-heading"><Image src="/novus-logo.svg" width={36} height={36} alt="" /><div><h2 id="account-title">Local player</h2><p>{savedCampaigns.length} {savedCampaigns.length === 1 ? "saved campaign" : "saved campaigns"}</p></div></div>
+            <PopoverContent className="account-menu" align="end" sideOffset={12} collisionPadding={16}>
+              <AccountMenu campaignCount={savedCampaigns.length} onChange={() => void refreshCampaigns()} />
             </PopoverContent>
           </Popover>
           <IconButton
@@ -494,6 +500,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
           <div className="collection-heading">
             <div>
               <h2 id="collection-title" className={greetingFontClassName}>Campaigns</h2>
+              <p className="collection-slots">{currentAccount() ? `${savedCampaigns.length} of ${CAMPAIGN_SLOTS} account slots` : "On this device until you sign in"}</p>
             </div>
           </div>
 
@@ -595,8 +602,8 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
               <h3>How it was made</h3>
               <p>
                 Built with Next.js, React, TypeScript, Leaflet, and a
-                configurable world engine. Campaigns remain stored locally on
-                your device.
+                configurable world engine. Sign in to keep five campaigns on
+                your account.
               </p>
             </article>
             <article>
@@ -612,8 +619,8 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
               <h3>Help & privacy</h3>
               <p>
                 Settings controls simulation, appearance, audio, and AI
-                providers. Saves stay in this browser unless you explicitly
-                export them.
+                providers. Account campaigns stay with your username. Without
+                an account, saves stay in this browser until you export them.
               </p>
             </article>
           </div>
@@ -666,7 +673,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
               <CommandGroup heading="PAGES">
                 {MENU_ITEMS.filter((item) => !item.disabled).map(({ label, href, icon: Icon }) => <CommandItem key={href} value={label} onSelect={() => navigate(href)}><Icon />{label}<ArrowRight className="command-arrow" /></CommandItem>)}
                 <CommandItem onSelect={() => { setCommandsOpen(false); setProfileOpen(false); requestAnimationFrame(() => setSettingsOpen(true)); }}><GearSix />Settings</CommandItem>
-                <CommandItem onSelect={() => { setCommandsOpen(false); requestAnimationFrame(() => setProfileOpen(true)); }}><UserCircle />Local player</CommandItem>
+                <CommandItem onSelect={() => { setCommandsOpen(false); requestAnimationFrame(() => setProfileOpen(true)); }}><UserCircle />Account</CommandItem>
               </CommandGroup>
               {!!savedCampaigns.length && <CommandGroup heading="YOUR TIMELINES">{savedCampaigns.slice(0, 8).map((campaign) => <CommandItem key={campaign.id} value={`${campaign.id} ${campaign.name} ${campaign.nations[campaign.player]?.name || ""}`} onSelect={() => showCampaign(campaign)}><BookOpenText /><span>{campaign.name}</span><small>Turn {campaign.turn}</small></CommandItem>)}</CommandGroup>}
             </CommandList>
@@ -689,7 +696,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
         <AlertDialogContent className="collection-delete-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this campaign?</AlertDialogTitle>
-            <AlertDialogDescription>This removes the save from this device. Export it first if you want to keep the timeline.</AlertDialogDescription>
+            <AlertDialogDescription>{currentAccount() ? "This frees one of your five account slots." : "This removes the save from this device. Export it first if you want to keep the timeline."}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep campaign</AlertDialogCancel>

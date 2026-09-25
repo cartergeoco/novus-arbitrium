@@ -70,7 +70,8 @@ import {
   type Campaign,
 } from "@/lib/game";
 import { recordTerritorySplit, regionViews, type RegionAtlas } from "@/lib/world-regions";
-import { campaigns, saveCampaign, deleteCampaign } from "@/lib/storage";
+import AccountMenu from "@/components/AccountMenu";
+import { campaigns, currentAccount, deleteCampaign, saveCampaign, subscribeAccount } from "@/lib/saves";
 import { factions } from "@/lib/alignments";
 import { parseCampaign } from "@/lib/validation";
 const WorldMap = dynamic(() => import("./WorldMap"), {
@@ -190,6 +191,9 @@ export default function Game({
       requestRef.current?.abort();
     };
   }, []);
+  useEffect(() => subscribeAccount(() => {
+    void campaigns().then(setSaves).catch(() => undefined);
+  }), []);
   const preview = useMemo(
     () => (world ? createCampaign(world, "Preview", "USA") : null),
     [world],
@@ -296,11 +300,9 @@ export default function Game({
       await saveCampaign(next);
       setSaves((prev) => [next, ...prev.filter((c) => c.id !== next.id)]);
       setSaveState("saved");
-    } catch {
+    } catch (error) {
       setSaveState("Save failed · export a backup");
-      toast.error(
-        "Unable to save on this device. Use Export to keep this campaign.",
-      );
+      toast.error(error instanceof Error ? error.message : "Unable to save this campaign. Use Export to keep it.");
     }
   }, []);
   const choose = (id: string) => {
@@ -1283,27 +1285,10 @@ export default function Game({
         />
       )}
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
-        <DialogContent className="profile-dialog">
-          <UserCircle size={45} weight="duotone" />
-          <DialogTitle>Local player</DialogTitle>
-          <DialogDescription>
-            Your timelines live on this device.
-          </DialogDescription>
-          <p>
-            {saves.length} saved {saves.length === 1 ? "campaign" : "campaigns"}
-            . No separate game account is needed for this alpha. Cloud
-            synchronization and multiplayer are not available.
-          </p>
-          <button
-            className="outline-button"
-            onClick={() => {
-              setProfileOpen(false);
-              importInput.current?.click();
-            }}
-          >
-            <UploadSimple />
-            Import a campaign
-          </button>
+        <DialogContent className="profile-dialog account-menu">
+          <DialogTitle className="sr-only">Account</DialogTitle>
+          <DialogDescription className="sr-only">Sign in to keep up to five campaigns on your account.</DialogDescription>
+          <AccountMenu campaignCount={saves.length} onChange={() => { void campaigns().then(setSaves).catch(() => undefined); }} />
         </DialogContent>
       </Dialog>
       <AlertDialog
@@ -1314,8 +1299,9 @@ export default function Game({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this campaign?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the save from this device. Export it first if you
-              want to keep the timeline.
+              {currentAccount()
+                ? "This frees one of your five account slots."
+                : "This removes the save from this device. Export it first if you want to keep the timeline."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
