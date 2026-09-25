@@ -4,6 +4,7 @@ import type * as Leaflet from "leaflet";
 import type { FeatureCollection } from "geojson";
 import type { Nation } from "@/lib/game";
 import type { RegionView } from "@/lib/world-regions";
+import { labelVisible, MAP_MAX_ZOOM, MAP_MIN_ZOOM, waterLabels, waterLines } from "@/lib/waters";
 import { bbox } from "@turf/turf";
 
 function shiftCoords(coords: unknown, delta: number): unknown {
@@ -136,15 +137,8 @@ function wrapToward(viewLng: number, lng: number) {
   return lng + Math.round((viewLng - lng) / 360) * 360;
 }
 
-const MIN_ZOOM = 3.6;
-const MAX_ZOOM = 6;
-
-function labelShown(zoom: number, population: number, selected: boolean) {
-  if (selected) return true;
-  const size = Math.min(1, Math.log10(Math.max(population, 1000)) / 9);
-  const visibleAt = MIN_ZOOM + (1 - size) * (MAX_ZOOM - MIN_ZOOM);
-  return zoom + 0.05 >= visibleAt;
-}
+const MIN_ZOOM = MAP_MIN_ZOOM;
+const MAX_ZOOM = MAP_MAX_ZOOM;
 
 function gridStep(zoom: number) {
   const targetPx = Math.max(22, 108 - zoom * 12);
@@ -457,21 +451,34 @@ export default function WorldMap(props: Props) {
             if (root) {
               root.dataset.pop = String(n.population);
               root.dataset.selected = selected ? "1" : "0";
-              root.style.opacity = labelShown(m.getZoom(), n.population, selected) ? "1" : "0";
+              root.style.opacity = labelVisible(m.getZoom(), n.population, selected) ? "1" : "0";
             }
           }
-        for (const [name, lat, lng] of [["ATLANTIC", 8, -34], ["PACIFIC", 4, -148]] as const)
-          leaflet.marker([lat, lng + shift], {
-            icon: leaflet.divIcon({
-              html: `${name}<br/>OCEAN`,
-              className: "map-ocean-label",
-              iconSize: [108, 35],
-              iconAnchor: [54, 18],
-            }),
-            interactive: false,
-            keyboard: false,
-            pmIgnore: true,
-          }).addTo(labelLayer.current);
+        if (props.labels)
+          for (const water of waterLabels) {
+            const label = document.createElement("span");
+            waterLines(water.name).forEach((line, index) => {
+              if (index) label.appendChild(document.createElement("br"));
+              label.appendChild(document.createTextNode(line));
+            });
+            const marker = leaflet.marker([water.lat, water.lng + shift], {
+              icon: leaflet.divIcon({
+                html: label,
+                className: "map-label map-water-label",
+                iconSize: [156, 32],
+                iconAnchor: [78, 16],
+              }),
+              interactive: false,
+              keyboard: false,
+              pmIgnore: true,
+            }).addTo(labelLayer.current);
+            const root = marker.getElement();
+            if (root) {
+              root.dataset.pop = String(water.weight);
+              root.dataset.selected = "0";
+              root.style.opacity = labelVisible(m.getZoom(), water.weight) ? "1" : "0";
+            }
+          }
       }
   }, [
     ready,
@@ -487,7 +494,7 @@ export default function WorldMap(props: Props) {
     const fade = () => {
       const zoom = m.getZoom();
       container.current?.querySelectorAll<HTMLElement>(".map-label").forEach((el) => {
-        el.style.opacity = labelShown(zoom, Number(el.dataset.pop || 0), el.dataset.selected === "1")
+        el.style.opacity = labelVisible(zoom, Number(el.dataset.pop || 0), el.dataset.selected === "1")
           ? "1"
           : "0";
       });

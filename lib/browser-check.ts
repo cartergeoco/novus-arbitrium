@@ -9,7 +9,7 @@ function configuration() {
   const siteKey = process.env.TURNSTILE_SITE_KEY?.trim();
   const secretKey = process.env.TURNSTILE_SECRET_KEY?.trim();
   const signingSecret = process.env.BROWSER_CHECK_SECRET?.trim();
-  if (process.env.NODE_ENV !== "production" && !siteKey && !secretKey && !signingSecret) return null;
+  if (!siteKey && !secretKey && !signingSecret) return null;
   if (!siteKey || !secretKey || !signingSecret || signingSecret.length < 32)
     throw Object.assign(Error("Browser verification is not configured. Set the Turnstile keys and a 32+ character BROWSER_CHECK_SECRET."), { status: 503 });
   return { siteKey, secretKey, signingSecret };

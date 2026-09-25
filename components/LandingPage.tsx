@@ -540,7 +540,7 @@ export default function LandingPage({ wordmarkFontClassName, greetingFontClassNa
                   <article className="collection-card" key={campaign.id} style={{ "--item-index": Math.min(index, 6) } as CSSProperties}>
                     <span className="collection-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
                     <span className="collection-flag">
-                      {nation?.flag && <Flag spec={nation.flag} iso={nation.iso} original={nation.original} />}
+                      {nation?.flag && <Flag spec={nation.flag} iso={nation.iso} id={nation.id} original={nation.original} />}
                     </span>
                     <div className="collection-card-main">
                       {renameId === campaign.id ? (

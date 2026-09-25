@@ -42,7 +42,7 @@ test("production browser check rejects unverified callers and validates Turnstil
   await requireBrowserCheck(verifiedRequest);
 });
 
-test("production browser check fails closed if keys are missing", async (t) => {
+test("an unconfigured browser check is skipped, and a partial setup fails closed", async (t) => {
   const previous = process.env.NODE_ENV;
   const siteKey = process.env.TURNSTILE_SITE_KEY;
   const secretKey = process.env.TURNSTILE_SECRET_KEY;
@@ -57,5 +57,9 @@ test("production browser check fails closed if keys are missing", async (t) => {
   delete process.env.TURNSTILE_SITE_KEY;
   delete process.env.TURNSTILE_SECRET_KEY;
   delete process.env.BROWSER_CHECK_SECRET;
-  await assert.rejects(requireBrowserCheck(new Request("https://example.com/api/turn")), /not configured/);
+  const request = new Request("https://example.com/api/turn");
+  assert.equal((await browserCheckState(request)).verified, true);
+  await requireBrowserCheck(request);
+  process.env.TURNSTILE_SITE_KEY = "site-key";
+  await assert.rejects(requireBrowserCheck(request), /not configured/);
 });

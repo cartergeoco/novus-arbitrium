@@ -53,7 +53,7 @@ New accounts use a confirmation code sent to a real email address or Google sign
 
 ## Browser and abuse protection
 
-Sign-in, account saves, and AI routes require a recent Cloudflare Turnstile Invisible check in production. The server verifies the token with Cloudflare, checks its hostname and action, then issues a signed, HttpOnly cookie valid for 20 minutes. The secret key never goes to the browser. Local development with no Turnstile values skips the check. See [browser security setup](docs/BROWSER_SECURITY.md) for the three deployment variables and edge rate-limit guidance. Turnstile reduces automated abuse but does not establish a person's identity or stop network-level DDoS traffic on its own.
+Sign-in, account saves, and AI routes require a recent Cloudflare Turnstile Invisible check once it is configured. The server verifies the token with Cloudflare, checks its hostname and action, then issues a signed, HttpOnly cookie valid for 20 minutes. The secret key never goes to the browser. With no Turnstile values set, those routes stay available. See [browser security setup](docs/BROWSER_SECURITY.md) for the three deployment variables and edge rate-limit guidance. Turnstile reduces automated abuse but does not establish a person's identity or stop network-level DDoS traffic on its own.
 
 ## Models
 

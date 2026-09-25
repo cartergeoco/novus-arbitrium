@@ -158,6 +158,13 @@
   position: relative;
   z-index: 3;
 }
+:is(.home-invitation, .create-controls, .nation-details, .decision-dock) .begin-button > span {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.25;
+  text-align: left;
+}
 :is(.home-invitation, .create-controls, .nation-details, .decision-dock) .begin-button::after {
   content: "";
   position: absolute;
@@ -837,4 +844,4 @@ input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-o
 .advance-time-button:disabled { opacity: .45; cursor: not-allowed; }
 .landing-game-surface .embedded-game .create-controls { background: transparent; box-shadow: none; }
 .landing-game-surface .embedded-game .leaflet-map { filter: none; }
-.map-ocean-label { width: 108px; color: #9b978855; font: 10px/1.8 "IBM Plex Mono", monospace; letter-spacing: .32em; text-align: center; pointer-events: none; }
+.map-label.map-water-label { width: 156px; color: #9eb0be99; font: 10px/1.35 "IBM Plex Mono", monospace; letter-spacing: .14em; text-align: center; pointer-events: none; }

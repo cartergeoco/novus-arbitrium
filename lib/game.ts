@@ -21,6 +21,7 @@ import type {
   Polygon,
   MultiPolygon,
 } from "geojson";
+import { sealBorder, simplifyRing } from "./geometry";
 import { changeRegion, changeRegionProfile, foundNation, recordTerritorySplit, regionViews, type RegionAtlas, type RegionState, type RegionView } from "./world-regions";
 import { deriveFlag, derivePolity, flagInputSchema, heritageFlag, makeFlag, type FlagSpec } from "./flags";
 import { flagColors } from "./flag";
@@ -285,7 +286,7 @@ export function transferTerritory(
 ): Record<string, Nation> {
   const source = nations[sourceId];
   if (!source) throw Error("That cannot happen. The selected country is not on the map.");
-  const closed = ring.map((p) => [...p]);
+  const closed = simplifyRing(ring).map((p) => [...p]);
   if (JSON.stringify(closed[0]) !== JSON.stringify(closed.at(-1)))
     closed.push([...closed[0]]);
   const mask = feature({ type: "Polygon", coordinates: [closed] }) as Land;
@@ -299,8 +300,9 @@ export function transferTerritory(
     throw Error("That cannot happen. A country cannot receive its own land in this drawing.");
   if (targetId && !nations[targetId])
     throw Error("That cannot happen. The receiving country is not on the map.");
-  const remainder = difference(featureCollection([land, cut]));
-  const share = clamp(area(cut) / area(land), 0, 1),
+  const piece = feature(sealBorder(cut.geometry));
+  const remainder = difference(featureCollection([land, piece]));
+  const share = clamp(area(piece) / area(land), 0, 1),
     pop = Math.round(source.population * share),
     gdp = source.gdp * share,
     forces = Math.round((source.military || 0) * share);
@@ -308,7 +310,7 @@ export function transferTerritory(
   if (remainder)
     next[sourceId] = {
       ...source,
-      geometry: remainder.geometry,
+      geometry: sealBorder(remainder.geometry),
       population: source.population - pop,
       gdp: source.gdp - gdp,
       military: Math.max(0, (source.military || 0) - forces),
@@ -316,11 +318,11 @@ export function transferTerritory(
   else delete next[sourceId];
   if (targetId) {
     const target = next[targetId];
-    const merged = union(featureCollection([feature(target.geometry), cut]));
+    const merged = union(featureCollection([feature(target.geometry), piece]));
     if (!merged) throw Error("That cannot happen. Those two territories cannot be joined.");
     next[targetId] = {
       ...target,
-      geometry: merged.geometry,
+      geometry: sealBorder(merged.geometry),
       population: target.population + pop,
       gdp: target.gdp + gdp,
       military: Math.min(100, (target.military || 0) + forces),
@@ -336,7 +338,7 @@ export function transferTerritory(
       original: false,
       flag: flag || deriveFlag(heritageFlag(source.id) || source.flag, id),
       color: source.color,
-      geometry: cut.geometry,
+      geometry: piece.geometry,
       population: pop,
       gdp,
       military: forces,
@@ -585,6 +587,9 @@ export function applyTurn(
   next.status = resolveStatus(next);
   return next;
 }
+export function expectsForeignResponse(action: string) {
+  return /\b(faction|alliance|coalition|bloc|pact|league|recognize|recognition|invite|treaty|other nations|other countries|other powers)\b/i.test(action);
+}
 export function demoTurn(
   c: Campaign,
   action: string,
@@ -592,7 +597,8 @@ export function demoTurn(
 ): TurnResult {
   const a = action.toLowerCase(),
     n = c.nations[c.player],
-    hard = settings.difficulty === "Challenging" ? 2 : 0;
+    hard = settings.difficulty === "Challenging" ? 2 : 0,
+    foreign = expectsForeignResponse(action);
   let title = "Your proposal enters public debate",
     summary =
       "Your cabinet begins a feasibility review. Public expectations rise while the details are debated. This local demo recognizes broad policy themes; connect an AI provider for nuanced decisions.",
@@ -607,10 +613,11 @@ export function demoTurn(
     stability = 4;
     economy = -2;
     influence = 1;
-  } else if (/trade|treaty|diploma|peace|alliance/.test(a)) {
-    title = "Diplomatic channels open";
-    summary =
-      "Your diplomatic initiative wins a cautious welcome abroad. Negotiators begin discussing practical terms. Commercial confidence improves as the prospect of closer cooperation grows.";
+  } else if (/trade|treaty|diploma|peace|alliance|faction|coalition|bloc|pact|league|recognize|invite/.test(a)) {
+    title = foreign ? "The offer is answered this turn" : "Diplomatic channels open";
+    summary = foreign
+      ? "The governments you asked do not wait. Each one accepts, refuses, or counters now, and the arrangement is already in force."
+      : "Your diplomatic initiative wins a cautious welcome abroad. Negotiators begin discussing practical terms. Commercial confidence improves as the prospect of closer cooperation grows.";
     category = "Diplomacy";
     stability = 1;
     economy = 3;
@@ -648,7 +655,8 @@ export function demoTurn(
         Math.abs(b.center[0] - n.center[0]) -
         Math.abs(b.center[1] - n.center[1]),
     )
-    .slice(0, 2);
+    .slice(0, foreign ? 3 : 2);
+  const responders = others.slice(0, foreign ? 3 : 1);
   return {
     title,
     summary,
@@ -660,6 +668,7 @@ export function demoTurn(
         economy: economy - hard,
         influence,
         relations: 0,
+        ...(foreign && category !== "Military" ? { alliesAdd: responders.map((x) => x.id) } : {}),
       },
       ...others.map((x) => ({
         id: x.id,
@@ -668,14 +677,18 @@ export function demoTurn(
         influence: 0,
         relations:
           category === "Military" ? -8 : category === "Diplomacy" ? 6 : 1,
+        ...(foreign && category === "Military" ? { rivalsAdd: [c.player] } : {}),
+        ...(foreign && category !== "Military" ? { alliesAdd: [c.player] } : {}),
       })),
     ],
-    headlines: others
-      .slice(0, 1)
+    headlines: responders
       .map((x) => ({
-        title: `${x.name} responds to your policy`,
-        body:
-          category === "Military"
+        title: foreign ? `${x.name} answers` : `${x.name} responds to your policy`,
+        body: foreign
+          ? category === "Military"
+            ? `${x.name} rejects the move and opposes it now.`
+            : `${x.name} accepts the offer. The decision is settled this turn.`
+          : category === "Military"
             ? "Officials call for restraint and review their security posture."
             : "Officials acknowledge the announcement and begin reviewing its regional implications.",
       })),
@@ -711,9 +724,16 @@ export function compactContext(
           b.center[1] - player.center[1],
         ),
     );
-  const selected = [player, ...mentioned, ...neighbors]
+  const foreign = expectsForeignResponse(action);
+  const partners = foreign
+    ? Object.values(c.nations).filter((n) => n.id !== c.player && ((player.allies || []).includes(n.id) || (player.rivals || []).includes(n.id)))
+    : [];
+  const powers = foreign
+    ? Object.values(c.nations).filter((n) => n.id !== c.player).sort((a, b) => b.influence - a.influence).slice(0, 4)
+    : [];
+  const selected = [player, ...mentioned, ...partners, ...powers, ...neighbors]
     .filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i)
-    .slice(0, settings.contextNations);
+    .slice(0, Math.min(16, settings.contextNations + (foreign ? 4 : 0)));
   const allRegions = regions || [];
   const namedRegions = allRegions.filter((r) => r.properties.name.length > 3 && request.includes(r.properties.name.toLowerCase()));
   const relevant = [
@@ -731,6 +751,7 @@ export function compactContext(
     date: c.date,
     turn: c.turn,
     player: c.player,
+    responseExpected: foreign,
     difficulty: settings.difficulty,
     daysPerTurn: settings.turnDays,
     nations: selected.map(({ geometry, flag, ...n }) => ({

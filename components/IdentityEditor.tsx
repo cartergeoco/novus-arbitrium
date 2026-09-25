@@ -52,7 +52,7 @@ export default function IdentityEditor({
         </div>
         {!custom ? (
           <div className="official-flag">
-            <Flag spec={flag} iso={nation.iso} original large />
+            <Flag spec={flag} iso={nation.iso} id={nation.id} original large />
             <p>This nation flies its official flag. Editing starts a custom design from a reconstruction of it.</p>
             <button type="button" className="primary-button" onClick={() => setCustom(true)}>Customize flag</button>
           </div>
