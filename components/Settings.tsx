@@ -287,7 +287,7 @@ export default function Settings({
               <p className="hint" role="status">
                 {connection.message}{" "}
                 {settings.provider === "ollama"
-                  ? "Ollama must run alongside this app's server at 127.0.0.1:11434. No API key is sent."
+                  ? "The site server contacts Ollama. On this computer that is 127.0.0.1:11434. A deployed site uses the private endpoint configured on the server. No API key from this tab is sent."
                   : "Keys stay in memory for this tab, separately for each provider. Sent through this site's server for verification and decisions. Never included in saves or exports. Provider charges apply to generation."}
               </p>
             </TabsContent>

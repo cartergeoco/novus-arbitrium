@@ -211,7 +211,7 @@ test("timeouts, unavailable local servers and rejected keys return actionable er
   assert.equal((await POST(request(valid))).status, 504);
   mode = "offline";
   const local = await POST(request({ ...valid, provider: "ollama" }));
-  assert.match((await local.json() as { error: string }).error, /Start Ollama/);
+  assert.match((await local.json() as { error: string }).error, /start Ollama/);
   mode = "key";
   const rejected = await POST(request(valid));
   assert.match((await rejected.json() as { error: string }).error, /rejected this API key/);

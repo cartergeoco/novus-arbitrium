@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { POST } from "../app/api/provider/route";
+import { ollamaUrl, providerHeaders, ProviderError } from "../lib/providers";
 
 const request = (body: unknown, origin = "http://localhost") => new Request("http://localhost/api/provider", {
   method: "POST", headers: { origin, "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -30,6 +31,26 @@ test("Ollama checks the server's installed models, accepts latest aliases and ne
   const body = await absent.json() as { connected: boolean; message: string; models: string[] };
   assert.equal(body.connected, false);
   assert.match(body.message, /custom:latest/);
+});
+
+test("a remote Ollama endpoint must be HTTPS and the server token is not taken from the browser", () => {
+  const previous = { base: process.env.OLLAMA_BASE_URL, token: process.env.OLLAMA_TOKEN };
+  try {
+    process.env.OLLAMA_BASE_URL = "http://ollama.example";
+    assert.throws(() => ollamaUrl("/api/chat"), ProviderError);
+    process.env.OLLAMA_BASE_URL = "https://ollama.example/novus-ollama/";
+    delete process.env.OLLAMA_TOKEN;
+    assert.throws(() => providerHeaders({ provider: "ollama", model: "llama" }), ProviderError);
+    process.env.OLLAMA_TOKEN = "server-token";
+    const headers = providerHeaders({ provider: "ollama", model: "llama", key: "browser-key" });
+    assert.equal(headers.Authorization, "Bearer server-token");
+    assert.equal(ollamaUrl("/api/tags"), "https://ollama.example/novus-ollama/api/tags");
+  } finally {
+    if (previous.base === undefined) delete process.env.OLLAMA_BASE_URL;
+    else process.env.OLLAMA_BASE_URL = previous.base;
+    if (previous.token === undefined) delete process.env.OLLAMA_TOKEN;
+    else process.env.OLLAMA_TOKEN = previous.token;
+  }
 });
 
 test("OpenAI verifies actual key/model access with no generation request", async (t) => {

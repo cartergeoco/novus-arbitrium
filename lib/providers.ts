@@ -21,12 +21,35 @@ export const endpoints: Record<Provider, string> = {
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   ollama: "http://127.0.0.1:11434/api/chat",
 };
+/** Server-only. Local Ollama stays on loopback. A remote endpoint must be HTTPS and is never sent to the browser. */
+export function ollamaBase() {
+  const raw = process.env.OLLAMA_BASE_URL?.trim();
+  if (!raw) return "http://127.0.0.1:11434";
+  let url: URL;
+  try { url = new URL(raw); }
+  catch { throw new ProviderError("OLLAMA_BASE_URL is not a valid URL.", 500); }
+  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  if (!local && url.protocol !== "https:") throw new ProviderError("The private Ollama endpoint must use HTTPS.", 500);
+  if (url.username || url.password) throw new ProviderError("Put the Ollama credential in OLLAMA_TOKEN, not in the URL.", 500);
+  return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+}
+export function ollamaUrl(path: "/api/chat" | "/api/tags" | "/api/show") {
+  return `${ollamaBase()}${path}`;
+}
+export function providerEndpoint(provider: Provider) {
+  return provider === "ollama" ? ollamaUrl("/api/chat") : endpoints[provider];
+}
 export function providerHeaders(data: Connection) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (data.provider !== "ollama") {
-    if (!data.key) throw new ProviderError("Add an API key in Settings → API first.", 400);
-    headers.Authorization = `Bearer ${data.key}`;
+  if (data.provider === "ollama") {
+    const remote = ollamaBase() !== "http://127.0.0.1:11434";
+    const token = process.env.OLLAMA_TOKEN?.trim();
+    if (remote && !token) throw new ProviderError("The server is missing OLLAMA_TOKEN for the private Ollama endpoint.", 500);
+    if (remote && token) headers.Authorization = `Bearer ${token}`;
+    return headers;
   }
+  if (!data.key) throw new ProviderError("Add an API key in Settings → API first.", 400);
+  headers.Authorization = `Bearer ${data.key}`;
   return headers;
 }
 export class ProviderError extends Error {
@@ -59,7 +82,7 @@ export function requestError(error: unknown, provider?: Provider) {
   if (error instanceof Error && error.name === "AbortError")
     return { error: "The request was cancelled. Your world has not changed.", status: 499 };
   return { error: provider === "ollama"
-    ? "Cannot reach Ollama. Start Ollama on the computer running this app's server (127.0.0.1:11434), then try again."
+    ? "Cannot reach Ollama. Locally, start Ollama on 127.0.0.1:11434. On the deployed site, the private endpoint and the gateway on your computer must both be running."
     : "Cannot reach the provider. Check your connection and try again. Your world has not changed.", status: 502 };
 }
 export function jsonResponse(body: unknown, status = 200) {
@@ -98,7 +121,7 @@ const ollamaName = (name: string) => name.includes(":") ? name : `${name}:latest
 export async function inspectProvider(data: Connection, signal: AbortSignal): Promise<ProviderInfo> {
   const headers = providerHeaders(data);
   if (data.provider === "ollama") {
-    const response = await fetchProvider("http://127.0.0.1:11434/api/tags", { headers, signal }, "ollama");
+    const response = await fetchProvider(ollamaUrl("/api/tags"), { headers, signal }, "ollama");
     const list = z.object({ models: z.array(z.object({
       name: z.string(), capabilities: z.array(z.string()).optional(),
     })) }).parse(await response.json()).models;
@@ -124,7 +147,7 @@ export async function inspectProvider(data: Connection, signal: AbortSignal): Pr
 }
 
 export async function ollamaContextLength(data: Connection, signal: AbortSignal) {
-  const response = await fetchProvider("http://127.0.0.1:11434/api/show", {
+  const response = await fetchProvider(ollamaUrl("/api/show"), {
     method: "POST", headers: providerHeaders(data), signal, body: JSON.stringify({ model: data.model }),
   }, "ollama");
   const info = z.object({ capabilities: z.array(z.string()).optional(), model_info: z.record(z.unknown()).optional() }).parse(await response.json());
