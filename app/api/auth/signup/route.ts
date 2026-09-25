@@ -16,7 +16,12 @@ export async function POST(request: Request) {
     const supabase = await createSupabaseServer();
     const created = await supabase.auth.signUp({ email, password, options: { data: { username } } });
     if (created.error || !created.data.user) {
-      const taken = /already|registered|exists/i.test(created.error?.message || "");
+      const message = created.error?.message || "";
+      if (created.error) console.error("signup failed", created.error.status, created.error.code, message);
+      if (created.error?.status === 429 || /rate limit/i.test(message)) {
+        return privateJson({ error: "Too many confirmation emails were sent in the last hour. Wait a little while, then try again." }, 429);
+      }
+      const taken = /already|registered|exists/i.test(message);
       return privateJson({ error: taken ? "That email is already registered." : "Could not create the account." }, taken ? 409 : 400);
     }
     if (created.data.session) return privateJson({ user: accountView(created.data.user) });

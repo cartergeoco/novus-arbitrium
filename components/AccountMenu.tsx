@@ -138,7 +138,7 @@ export default function AccountMenu({
           <form className="account-form" onSubmit={(event) => void submit(event)}>
             {mode === "signin" && (
               <label>
-                Username
+                Username or email
                 <input name="username" autoComplete="username" value={username} maxLength={254} required onChange={(event) => setUsername(event.target.value)} />
               </label>
             )}
