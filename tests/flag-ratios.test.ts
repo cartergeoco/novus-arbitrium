@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { flagRatio } from "../lib/flag/ratios.ts";
+import { flagRatio } from "../lib/flag/ratios";
 
 test("flags use their own proportions", () => {
   assert.equal(flagRatio("US"), 19 / 10);
