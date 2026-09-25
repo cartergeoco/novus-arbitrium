@@ -40,6 +40,6 @@ test("Ollama gateway authenticates and forwards only bounded chat operations", a
   assert.equal((await fetch(`${base}/api/chat`, { method: "POST", headers, body: "{}" })).status, 200);
   assert.equal((await fetch(`${base}/api/pull`, { method: "POST", headers, body: "{}" })).status, 404);
   assert.equal((await fetch(`${base}/api/chat`, { method: "POST", headers: { ...headers, authorization: "Bearer wrong" }, body: "{}" })).status, 401);
-  assert.equal((await fetch(`${base}/api/chat`, { method: "POST", headers, body: " ".repeat(250_001) })).status, 413);
+  assert.equal((await fetch(`${base}/api/chat`, { method: "POST", headers, body: " ".repeat(2_000_001) })).status, 413);
   assert.deepEqual(seen, ["GET /api/tags", "POST /api/chat {}"]);
 });

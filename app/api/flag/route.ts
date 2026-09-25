@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { flagPromptGuide } from "@/lib/flag/catalog";
 import { normalizeFlag } from "@/lib/flag/normalize";
+import { requireBrowserCheck } from "@/lib/browser-check";
 import { generationFields, supportsTemperature, type Provider } from "@/lib/settings";
 import {
   authorizeProvider, checkOrigin, connectionSchema, fetchProvider, jsonResponse, openRouterInfo, ProviderError, providerEndpoint, providerHeaders, readJsonRequest, readProviderJson, requestError,
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
   let provider: Provider | undefined;
   try {
     checkOrigin(request);
+    await requireBrowserCheck(request);
     const data = input.parse(await readJsonRequest(request, 40000));
     provider = data.provider;
     await authorizeProvider(data);

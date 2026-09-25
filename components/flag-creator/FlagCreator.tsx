@@ -6,6 +6,7 @@ import {
   FlagBanner, Palette, Plus, Shapes, Shuffle, Sparkle, Star, Trash, Globe, Stack,
 } from "@phosphor-icons/react";
 import { useFlagImage } from "../Flag";
+import { ensureBrowserCheck } from "@/lib/browser-check-client";
 import { ColorPicker } from "../ColorPicker";
 import { ParamSection } from "./ParamFields";
 import { ComponentPicker, LibraryPicker, ShapePicker, TemplatePicker } from "./Pickers";
@@ -275,6 +276,7 @@ function DescribePanel({ design, ai, onApply }: { design: FlagDesign; ai?: FlagA
     setBusy(true);
     setMessage("");
     try {
+      await ensureBrowserCheck();
       const response = await fetch("/api/flag", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...ai, description: text, current: modify ? design : undefined }),

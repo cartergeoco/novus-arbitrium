@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { supportsTemperature, type Settings } from "@/lib/settings";
 import type { ProviderInfo } from "@/lib/providers";
+import { ensureBrowserCheck } from "@/lib/browser-check-client";
 
 export function useProviderConnection(settings: Settings, key: string, enabled: boolean) {
   const { provider, model } = settings;
@@ -13,6 +14,8 @@ export function useProviderConnection(settings: Settings, key: string, enabled: 
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
+        await ensureBrowserCheck();
+        if (controller.signal.aborted) return;
         const response = await fetch("/api/provider", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider, model, key: key || undefined }),

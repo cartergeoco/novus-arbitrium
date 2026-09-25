@@ -3,6 +3,7 @@ import { turnSchema } from "@/lib/game";
 import { turnOutputSchema } from "@/lib/turn-output-schema";
 import { generationFields, supportsTemperature, type Provider } from "@/lib/settings";
 import { estimateMessageTokens, estimateTurnTokens, turnMessages } from "@/lib/generation";
+import { requireBrowserCheck } from "@/lib/browser-check";
 import {
   authorizeProvider, checkOrigin, connectionSchema, fetchProvider, jsonResponse, providerEndpoint,
   ollamaContextLength, openRouterInfo, ProviderError, providerHeaders, readJsonRequest, readProviderJson, requestError,
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
   let provider: Provider | undefined;
   try {
     checkOrigin(request);
+    await requireBrowserCheck(request);
     const data = input.parse(await readJsonRequest(request, 90000));
     provider = data.provider;
     await authorizeProvider(data);

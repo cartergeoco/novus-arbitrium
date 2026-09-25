@@ -94,6 +94,8 @@ export async function fetchProvider(url: string, init: RequestInit, provider: Pr
 }
 export function requestError(error: unknown, provider?: Provider) {
   if (error instanceof ProviderError) return { error: error.message, status: error.status };
+  if (error instanceof Error && "status" in error && (error.status === 403 || error.status === 503))
+    return { error: error.message, status: error.status };
   if (error instanceof z.ZodError || error instanceof SyntaxError)
     return { error: "Invalid request settings.", status: 400 };
   if (error instanceof Error && error.name === "TimeoutError")

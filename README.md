@@ -47,6 +47,14 @@ Emblem artwork comes from reusable open licenses:
 
 Regenerate the emblem index with `npm run flag:assets` after installing dependencies. `npm run flag` renders, describes, and lists catalog entries from the command line.
 
+## Accounts
+
+New accounts use a confirmation code sent to a real email address or Google sign-in. Older username/password accounts can still sign in from the account menu; new synthetic-email accounts are no longer created. Account campaigns live in a private Supabase Storage bucket, scoped to the authenticated user and limited to five saves. See [Supabase setup](docs/SUPABASE.md) for the three environment values, email template, Google callback, storage layout, and developer inspection queries. The built-in Supabase email sender is for development; a custom SMTP provider is required for public email delivery.
+
+## Browser and abuse protection
+
+Sign-in, account saves, and AI routes require a recent Cloudflare Turnstile Invisible check in production. The server verifies the token with Cloudflare, checks its hostname and action, then issues a signed, HttpOnly cookie valid for 20 minutes. The secret key never goes to the browser. Local development with no Turnstile values skips the check. See [browser security setup](docs/BROWSER_SECURITY.md) for the three deployment variables and edge rate-limit guidance. Turnstile reduces automated abuse but does not establish a person's identity or stop network-level DDoS traffic on its own.
+
 ## Models
 
 Settings → API chooses the provider, model, and generation limits. The browser never talks to Ollama. The server does. Locally that is `127.0.0.1:11434`. OpenAI and OpenRouter requests use the key held in tab memory.

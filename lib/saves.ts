@@ -1,7 +1,8 @@
 import type { Campaign } from "./game";
+import { ensureBrowserCheck } from "./browser-check-client";
 import { campaigns as localCampaigns, deleteCampaign as deleteLocalCampaign, saveCampaign as saveLocalCampaign } from "./storage";
 
-export type Account = { username: string };
+export type Account = { displayName: string; email: string | null };
 
 let cached: Account | null | undefined;
 let loading: Promise<Account | null> | null = null;
@@ -28,7 +29,7 @@ async function readAccount() {
     loading = fetch("/api/auth/session", { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as { user?: Account | null };
-        return body.user?.username ? body.user : null;
+        return body.user?.displayName ? body.user : null;
       })
       .catch(() => null)
       .finally(() => { loading = null; });
@@ -41,6 +42,7 @@ async function readAccount() {
 export async function campaigns(): Promise<Campaign[]> {
   const account = await readAccount();
   if (!account) return localCampaigns();
+  await ensureBrowserCheck();
   const response = await fetch("/api/campaigns", { cache: "no-store" });
   const body = await response.json() as { campaigns?: Campaign[]; error?: string };
   if (!response.ok) throw Error(body.error || "Could not load account campaigns.");
@@ -50,6 +52,7 @@ export async function campaigns(): Promise<Campaign[]> {
 export async function saveCampaign(campaign: Campaign) {
   const account = await readAccount();
   if (!account) return saveLocalCampaign(campaign);
+  await ensureBrowserCheck();
   const response = await fetch("/api/campaigns", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -62,34 +65,51 @@ export async function saveCampaign(campaign: Campaign) {
 export async function deleteCampaign(id: string) {
   const account = await readAccount();
   if (!account) return deleteLocalCampaign(id);
+  await ensureBrowserCheck();
   const response = await fetch(`/api/campaigns?id=${encodeURIComponent(id)}`, { method: "DELETE" });
   const body = await response.json().catch(() => ({})) as { error?: string };
   if (!response.ok) throw Error(body.error || "Could not delete this campaign.");
 }
 
-async function submit(path: string, username: string, password: string) {
+async function submit(path: string, body: Record<string, unknown>) {
+  if (path !== "/api/auth/signout") await ensureBrowserCheck();
   const response = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify(body), cache: "no-store",
   });
-  const body = await response.json().catch(() => ({})) as { username?: string; error?: string };
-  if (!response.ok || !body.username) throw Error(body.error || "Could not sign in.");
-  cached = { username: body.username };
+  const result = await response.json().catch(() => ({})) as { user?: Account; url?: string; error?: string };
+  if (!response.ok) throw Error(result.error || "Could not complete sign-in.");
+  return result;
+}
+
+function acceptAccount(user: Account | undefined) {
+  if (!user?.displayName) throw Error("Sign-in completed without an account. Try again.");
+  cached = user;
   emit();
-  return cached;
+  return user;
 }
 
-export function signUp(username: string, password: string) {
-  return submit("/api/auth/signup", username, password);
+export async function requestEmailCode(email: string, createAccount: boolean) {
+  await submit("/api/auth/email/start", { email, createAccount });
 }
 
-export function signIn(username: string, password: string) {
-  return submit("/api/auth/signin", username, password);
+export async function verifyEmailCode(email: string, code: string) {
+  return acceptAccount((await submit("/api/auth/email/verify", { email, code })).user);
+}
+
+export async function signInLegacy(username: string, password: string) {
+  return acceptAccount((await submit("/api/auth/signin", { username, password })).user);
+}
+
+export async function signInWithGoogle() {
+  const result = await submit("/api/auth/google", {});
+  if (!result.url) throw Error("Google sign-in did not return a destination.");
+  window.location.assign(result.url);
 }
 
 export async function signOut() {
-  await fetch("/api/auth/signout", { method: "POST" });
+  await submit("/api/auth/signout", {});
   cached = null;
   emit();
 }
