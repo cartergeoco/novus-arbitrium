@@ -21,8 +21,8 @@ test("provider switches restore each model across reloads without crossing crede
   keys.set("openrouter", "router-test-key");
   assert.equal(keys.get("openai"), "openai-test-key");
   assert.equal(keys.get("openrouter"), "router-test-key");
-  keys.set("ollama", "must-not-send");
-  assert.equal(keys.get("ollama"), "");
+  keys.set("ollama", "access-key");
+  assert.equal(keys.get("ollama"), "access-key");
   assert.equal(createSessionKeys().get("openai"), "");
   keys.set("openai", "");
   assert.equal(keys.get("openai"), "");

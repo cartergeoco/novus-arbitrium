@@ -13,9 +13,6 @@ import "./flag-creator.css";
 export const metadata: Metadata = {
   title: "Novus Arbitrium",
   description: "Lead a nation through an unwritten history. A playable alternate-history strategy alpha with editable borders and an AI world engine.",
-  other: {
-    "codex-preview": "development",
-  },
   icons: {
     icon: [{ url: "/favicon.svg?v=white", type: "image/svg+xml" }],
     shortcut: [{ url: "/favicon.svg?v=white", type: "image/svg+xml" }],

@@ -1,4 +1,8 @@
 {
   "framework": "nextjs",
-  "buildCommand": "next build"
+  "buildCommand": "next build",
+  "functions": {
+    "app/api/turn/route.ts": { "maxDuration": 60 },
+    "app/api/flag/route.ts": { "maxDuration": 60 }
+  }
 }

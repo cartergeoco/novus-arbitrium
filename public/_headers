@@ -1,0 +1,10 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  X-DNS-Prefetch-Control: off
+  Strict-Transport-Security: max-age=31536000
+
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable

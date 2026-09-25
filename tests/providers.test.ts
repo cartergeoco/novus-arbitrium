@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { POST } from "../app/api/provider/route";
+import { POST as turnPOST } from "../app/api/turn/route";
+import { POST as flagPOST } from "../app/api/flag/route";
 import { ollamaUrl, providerHeaders, ProviderError } from "../lib/providers";
 
 const request = (body: unknown, origin = "http://localhost") => new Request("http://localhost/api/provider", {
@@ -51,6 +53,61 @@ test("a remote Ollama endpoint must be HTTPS and the server token is not taken f
     if (previous.token === undefined) delete process.env.OLLAMA_TOKEN;
     else process.env.OLLAMA_TOKEN = previous.token;
   }
+});
+
+test("hosted Ollama fails closed without a separate client key and rejects unauthenticated callers before fetching", async (t) => {
+  const previous = { base: process.env.OLLAMA_BASE_URL, token: process.env.OLLAMA_TOKEN, client: process.env.OLLAMA_CLIENT_KEY };
+  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json({ models: [{ name: "llama:latest" }] }));
+  try {
+    process.env.OLLAMA_BASE_URL = "https://ollama.example/novus-ollama";
+    process.env.OLLAMA_TOKEN = "gateway-token-with-more-than-32-characters";
+    delete process.env.OLLAMA_CLIENT_KEY;
+    const body = { provider: "ollama", model: "llama" };
+    assert.equal((await POST(request(body))).status, 503);
+    process.env.OLLAMA_CLIENT_KEY = "client-key-with-more-than-32-characters";
+    assert.equal((await POST(request(body))).status, 403);
+    assert.equal((await POST(request({ ...body, key: "wrong-key" }))).status, 403);
+    assert.equal(fetch.mock.callCount(), 0);
+    const valid = await POST(request({ ...body, key: process.env.OLLAMA_CLIENT_KEY }));
+    assert.equal(valid.status, 200);
+    assert.equal(fetch.mock.callCount(), 1);
+    assert.equal(new Headers(fetch.mock.calls[0].arguments[1]?.headers).get("Authorization"), `Bearer ${process.env.OLLAMA_TOKEN}`);
+  } finally {
+    for (const [name, value] of [["OLLAMA_BASE_URL", previous.base], ["OLLAMA_TOKEN", previous.token], ["OLLAMA_CLIENT_KEY", previous.client]] as const) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
+});
+
+test("turn and flag generation cannot bypass hosted Ollama access control", async (t) => {
+  const previous = { base: process.env.OLLAMA_BASE_URL, client: process.env.OLLAMA_CLIENT_KEY };
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw Error("Must not fetch"); });
+  try {
+    process.env.OLLAMA_BASE_URL = "https://ollama.example/novus-ollama";
+    delete process.env.OLLAMA_CLIENT_KEY;
+    const common = { provider: "ollama", model: "llama", temperature: 0.7, maxTokens: 512, prompt: "" };
+    const make = (path: string, body: unknown) => new Request(`http://localhost${path}`, {
+      method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    assert.equal((await turnPOST(make("/api/turn", { ...common, context: {} }))).status, 503);
+    assert.equal((await flagPOST(make("/api/flag", { ...common, description: "A blue flag" }))).status, 503);
+    assert.equal(fetch.mock.callCount(), 0);
+  } finally {
+    if (previous.base === undefined) delete process.env.OLLAMA_BASE_URL; else process.env.OLLAMA_BASE_URL = previous.base;
+    if (previous.client === undefined) delete process.env.OLLAMA_CLIENT_KEY; else process.env.OLLAMA_CLIENT_KEY = previous.client;
+  }
+});
+
+test("provider API rejects cross-site, non-JSON, and oversized requests before fetching", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw Error("Must not fetch"); });
+  const body = JSON.stringify({ provider: "openai", model: "gpt-4.1-mini", key: "test-key" });
+  const make = (headers: Record<string, string>, value = body) => new Request("http://localhost/api/provider", {
+    method: "POST", headers, body: value,
+  });
+  assert.equal((await POST(make({ "content-type": "application/json", "sec-fetch-site": "cross-site" }))).status, 403);
+  assert.equal((await POST(make({ "content-type": "text/plain" }))).status, 415);
+  assert.equal((await POST(make({ "content-type": "application/json" }, " ".repeat(2049)))).status, 413);
+  assert.equal(fetch.mock.callCount(), 0);
 });
 
 test("OpenAI verifies actual key/model access with no generation request", async (t) => {

@@ -380,7 +380,7 @@ export default function Game({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: settings.provider,
-          key: settings.provider === "ollama" ? undefined : apiKey,
+          key: apiKey || undefined,
           model: settings.model,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
@@ -1263,7 +1263,7 @@ export default function Game({
           nation={player}
           ai={settings.model.trim() && (settings.provider === "ollama" || apiKey) ? {
             provider: settings.provider,
-            key: settings.provider === "ollama" ? undefined : apiKey,
+            key: apiKey || undefined,
             model: settings.model,
             temperature: settings.temperature,
             maxTokens: settings.maxTokens,

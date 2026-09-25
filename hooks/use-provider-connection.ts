@@ -15,7 +15,7 @@ export function useProviderConnection(settings: Settings, key: string, enabled: 
       try {
         const response = await fetch("/api/provider", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, model, key: provider === "ollama" ? undefined : key }),
+          body: JSON.stringify({ provider, model, key: key || undefined }),
           signal: controller.signal, cache: "no-store",
         });
         const data = await response.json() as ProviderInfo & { error?: string };
