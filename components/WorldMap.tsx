@@ -410,7 +410,7 @@ export default function WorldMap(props: Props) {
           });
           layer.on("click", () => {
             const node = (layer as Leaflet.Path).getElement();
-            node?.blur();
+            (node as HTMLElement | null)?.blur();
             if (!latest.current.drawing && !latest.current.decorative)
               latest.current.onSelect(n.id);
           });
@@ -508,7 +508,7 @@ export default function WorldMap(props: Props) {
           features: worldCopies.flatMap((copy) =>
             props.regions!.features.map((feature) => ({
               ...feature,
-              geometry: shiftGeometry(continuousGeometry(feature.geometry), copy * 360),
+              geometry: shiftGeometry(continuousGeometry(feature.geometry as { type?: string; coordinates?: unknown }), copy * 360),
             })),
           ),
         } as FeatureCollection, {
@@ -527,7 +527,7 @@ export default function WorldMap(props: Props) {
             l.bindTooltip(el, { className: "country-tooltip", sticky: true });
             l.on("click", (event) => {
               L.current?.DomEvent.stopPropagation(event.originalEvent);
-              (l as Leaflet.Path).getElement()?.blur();
+              ((l as Leaflet.Path).getElement() as HTMLElement | null)?.blur();
               latest.current.onSelectRegion?.(f.properties.id);
             });
           },
