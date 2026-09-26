@@ -1,11 +1,18 @@
 import { z } from "zod";
 
-export const providerSchema = z.enum(["ollama", "openai", "openrouter"]);
+export const providerSchema = z.enum(["openrouter", "openai", "anthropic", "gemini", "groq", "mistral", "xai", "deepseek", "together", "cohere", "cerebras"]);
 export type Provider = z.infer<typeof providerSchema>;
+export const providerLabels: Record<Provider, string> = {
+  openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Claude (Anthropic)", gemini: "Google Gemini",
+  groq: "Groq", mistral: "Mistral AI", xai: "Grok (xAI)", deepseek: "DeepSeek",
+  together: "Together AI", cohere: "Cohere", cerebras: "Cerebras",
+};
 export const providerDefaults: Record<Provider, string> = {
-  ollama: "llama3.2",
-  openai: "gpt-4.1-mini",
   openrouter: "openai/gpt-4.1-mini",
+  openai: "gpt-4.1-mini", anthropic: "claude-sonnet-4-6", gemini: "gemini-2.5-flash",
+  groq: "llama-3.3-70b-versatile", mistral: "mistral-large-latest", xai: "grok-4.7",
+  deepseek: "deepseek-flash", together: "openai/gpt-oss-20b",
+  cohere: "command-a-plus-05-2026", cerebras: "gpt-oss-120b",
 };
 export const limits = {
   maxTokens: { min: 512, max: 8192 },
@@ -15,7 +22,8 @@ export const limits = {
 const boundedInteger = ({ min, max }: { min: number; max: number }) => z.number().int().min(min).max(max);
 export const generationFields = {
   temperature: z.number().finite().min(limits.temperature.min).max(limits.temperature.max),
-  maxTokens: boundedInteger(limits.maxTokens),
+  /** 0 means no application cap; the model uses its own maximum. */
+  maxTokens: z.union([z.literal(0), boundedInteger(limits.maxTokens)]),
   prompt: z.string().max(1500),
 };
 const savedModel = z.string().max(120);
@@ -24,7 +32,7 @@ const settingsSchema = z.object({
   turnDays: z.union([z.literal(1), z.literal(7), z.literal(30)]),
   provider: providerSchema,
   model: savedModel,
-  providerModels: z.object({ ollama: savedModel, openai: savedModel, openrouter: savedModel }),
+  providerModels: z.record(savedModel),
   ...generationFields,
   contextNations: boundedInteger(limits.contextNations),
   contrast: z.boolean(), motion: z.boolean(), transparency: z.boolean(),
@@ -34,7 +42,7 @@ const settingsSchema = z.object({
 });
 export type Settings = z.infer<typeof settingsSchema>;
 export const defaults: Settings = {
-  difficulty: "Standard", turnDays: 7, provider: "ollama", model: providerDefaults.ollama,
+  difficulty: "Standard", turnDays: 7, provider: "openrouter", model: providerDefaults.openrouter,
   providerModels: { ...providerDefaults }, temperature: 0.7, maxTokens: 1600,
   contextNations: 8, prompt: "", contrast: false,
   motion: false, transparency: true, fontSize: 16, sound: false, volume: 30,
@@ -45,8 +53,10 @@ export const defaults: Settings = {
 export function parseSettings(raw: unknown): Settings {
   const stored = raw && typeof raw === "object" && !Array.isArray(raw)
     ? { ...raw } as Record<string, unknown> : {};
-  const legacyDemo = stored.provider === "demo";
-  if (legacyDemo) { stored.provider = "ollama"; stored.model = providerDefaults.ollama; }
+  if (stored.provider === "demo" || stored.provider === "ollama") {
+    stored.provider = defaults.provider;
+    stored.model = defaults.model;
+  }
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(settingsSchema.shape) as (keyof Settings)[]) {
     const parsed = settingsSchema.shape[key].safeParse(stored[key]);
@@ -74,13 +84,15 @@ export function selectProvider(settings: Settings, provider: Provider): Settings
 
 export function normalizeNumber(value: string, fallback: number, range: { min: number; max: number }) {
   const number = Number(value);
-  return !value.trim() || !Number.isFinite(number) ? fallback
-    : Math.max(range.min, Math.min(range.max, Math.round(number)));
+  if (!value.trim() || !Number.isFinite(number)) return fallback;
+  const rounded = Math.round(number);
+  if (rounded === 0) return 0;
+  return Math.max(range.min, Math.min(range.max, rounded));
 }
 
 // With default reasoning enabled, these OpenAI families own their sampling.
 export function supportsTemperature(provider: Provider, model: string) {
-  if (provider === "ollama") return true;
+  if (provider !== "openai" && provider !== "openrouter") return true;
   const id = model.trim().replace(/^openai\//, "").replace(/^ft:/, "");
   return !/^(?:o[134](?:-|$)|gpt-[5-9](?:[.-]|$))/.test(id);
 }

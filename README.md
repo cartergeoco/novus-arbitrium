@@ -1,6 +1,6 @@
 # Novus Arbitrium
 
-A browser history game. Choose a country, make decisions, and follow an alternate-history campaign. Turns can be resolved by a configured language model (OpenAI, OpenRouter, or a local Ollama server) or by the built-in local rules.
+A browser history game. Choose a country, make decisions, and follow an alternate-history campaign. Turns can be resolved by a configured public AI provider or by the built-in local rules.
 
 Game source is **GPL-3.0-only**. See [LICENSE](LICENSE). Third-party libraries and assets keep their own licenses. Creator: Carter Geoco.
 
@@ -33,6 +33,7 @@ API keys stay in the browser tab. The app forwards them only through its own ser
 - Set the time step and difficulty, issue decisions, and read the chronicle.
 - Edit national identity, including a layered SVG flag. Official country flags are the MIT-licensed ISO 3166-1 SVGs from iso3166-flags. Custom and successor flags are drawn by the in-app flag engine.
 - Draw a polygon to cut or transfer territory. New polities receive a derived flag and identity. Undo is available until the next turn.
+- Firestorm v2.0 adds persistent wars, occupation pressure, suzerainty, four region types, unheld land, and map/timeline filters. Existing version-1 campaigns are upgraded in place when opened.
 
 ## Flags
 
@@ -43,7 +44,7 @@ Emblem artwork comes from reusable open licenses:
 - [Game-icons.net](https://game-icons.net/) — CC BY 3.0
 - [Material Design Icons](https://pictogrammers.com/library/mdi/) — Apache-2.0
 - [Font Awesome Free](https://fontawesome.com/license/free) — CC BY 4.0
-- [iso3166-flags](https://github.com/amckenna41/iso3166-flags) — MIT (ISO 3166-1 country flags)
+- [iso3166-flags](https://github.com/amckenna41/iso3166-flags) — MIT (ISO 3166-1 country flags and ISO 3166-2 subdivision flags). Regional images use the repository's CDN paths; a region has no flag where that dataset has no matching asset. Regenerate the mapping with `npm run flag:regions`.
 - [flag-icons](https://github.com/lipis/flag-icons) — MIT (emblem artwork)
 
 Regenerate the emblem index with `npm run flag:assets` after installing dependencies. `npm run flag` renders, describes, and lists catalog entries from the command line.
@@ -58,23 +59,9 @@ Sign-in, account saves, and AI routes require a recent Cloudflare Turnstile Invi
 
 ## Models
 
-Settings → API chooses the provider, model, and generation limits. The browser never talks to Ollama. The server does. Locally that is `127.0.0.1:11434`. OpenAI and OpenRouter requests use the key held in tab memory.
+Settings → API chooses among OpenRouter, OpenAI, Claude (Anthropic), Google Gemini, Groq, Mistral AI, Grok (xAI), DeepSeek, Together AI, Cohere, and Cerebras. Enter an API key from the selected provider and a model ID. The server checks model access and sends turns and flag requests to that provider. Keys stay in browser tab memory, separately for each provider; they are not saved or exported.
 
-A deployed site can reach Ollama on your computer through a stable private HTTPS address. Cloudflare quick tunnels are not used: their `trycloudflare.com` hostname changes every time the process restarts. This project uses [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), whose `*.ts.net` name stays the same across restarts.
-
-On the computer running Ollama:
-
-```sh
-# .env.ollama.local is gitignored. Set OLLAMA_TOKEN to a random 32+ character value.
-npm run ollama:gateway
-tailscale funnel --bg --set-path=/novus-ollama 11435
-```
-
-The gateway listens on `127.0.0.1:11435`, checks `Authorization: Bearer`, and permits only model listing, model information, and chat generation. Funnel publishes that path. Port `11434` stays closed. Use a path so this does not replace other services on the same Tailscale hostname.
-
-On the host that runs the website, set `OLLAMA_BASE_URL` to `https://<machine>.<tailnet>.ts.net/novus-ollama` and `OLLAMA_TOKEN` to the gateway token. Set a **different** random 32+ character `OLLAMA_CLIENT_KEY` there. Enter that client key in Settings → API when selecting Ollama; it remains in tab memory and is never saved. Without it, a public production website refuses Ollama requests even if Ollama is on the same server. See `.env.example`. Rotate both secrets if either is exposed. Turn responses are JSON, not a token stream; the gateway still forwards a response body as it arrives.
-
-For a public domain, generate each secret independently with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Store the server values in your hosting provider's secret settings, not in source control. Redirect HTTP to HTTPS at the edge. Rate-limit `/api/provider`, `/api/turn`, and `/api/flag` at the edge for your expected traffic; the app rejects cross-site and oversized requests but in-process limits cannot reliably cover every Worker instance. Keep the Ollama service itself bound to loopback and expose only the authenticated gateway.
+For a public domain, redirect HTTP to HTTPS and rate-limit `/api/provider`, `/api/turn`, and `/api/flag` at the edge for your expected traffic. The app rejects cross-site and oversized requests, but in-process limits cannot reliably cover every Worker instance.
 
 The token figure in a campaign is provider usage plus a conservative estimate. It is not a spending cap. Set spending limits in the provider account. A rejected request can still be billed by the provider.
 

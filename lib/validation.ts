@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { flagSchema, type Campaign } from "./game";
+import { absorbDependencies, flagSchema, type Campaign } from "./game";
 const finite = z.number().finite();
 const point = z.tuple([finite.min(-180).max(180), finite.min(-90).max(90)]);
 const ring = z.array(point).min(4).max(100000);
@@ -43,6 +43,7 @@ const nation = z.object({
   dossier: z.string().max(400).optional(),
   geometry,
   original: z.boolean(),
+  suzerain: z.string().max(40).optional(),
 });
 const date = z
   .string()
@@ -92,6 +93,7 @@ export const campaignSchema = z
       geometry: geometry.optional(),
       name: z.string().max(100).optional(),
       origin: z.string().max(40).optional(),
+      type: z.enum(["State", "Province", "Territory", "Commonwealth"]).optional(),
     })).optional(),
     removedRegions: z.array(z.string().max(100)).max(20000).optional(),
     wars: z.array(z.object({
@@ -101,13 +103,16 @@ export const campaignSchema = z
       goal: z.string().max(240),
       started: date,
       status: z.enum(["active", "ended"]),
+      ended: date.optional(),
+      outcome: z.enum(["restored", "occupied", "ceded"]).optional(),
     })).max(1000).optional(),
+    firestorm: z.literal(true).optional(),
   })
   .refine((c) => c.status === "defeat" || !!c.nations[c.player]);
 export function parseCampaign(raw: unknown): Campaign {
   const parsed = campaignSchema.safeParse(raw);
   if (!parsed.success)
     throw Error("This is not a valid Novus Arbitrium alpha save.");
-  return parsed.data as Campaign;
+  return absorbDependencies(parsed.data as Campaign);
 }
 export { parseSettings } from "./settings";

@@ -7,7 +7,7 @@ import { ensureBrowserCheck } from "@/lib/browser-check-client";
 export function useProviderConnection(settings: Settings, key: string, enabled: boolean) {
   const { provider, model } = settings;
   const [result, setResult] = useState<{ provider: string; model: string; key: string; info: ProviderInfo } | null>(null);
-  const needsKey = provider !== "ollama" && !key.trim();
+  const needsKey = !key.trim();
   const current = result?.provider === provider && result.model === model && result.key === key ? result.info : null;
   useEffect(() => {
     if (!enabled || !model.trim() || needsKey) return;

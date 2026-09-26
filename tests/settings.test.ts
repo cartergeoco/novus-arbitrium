@@ -5,24 +5,25 @@ import { createSessionKeys } from "../lib/session-keys";
 import { estimateTurnTokens, instructions, turnMessages } from "../lib/generation";
 
 test("provider switches restore each model across reloads without crossing credentials", () => {
-  let settings = parseSettings({ ...defaults, model: "local-custom:8b" });
+  let settings = parseSettings({ ...defaults, model: "custom/router-model" });
   settings = selectProvider(settings, "openai");
   assert.equal(settings.model, "gpt-4.1-mini");
   settings = parseSettings({ ...settings, model: "gpt-4.1" });
   settings = selectProvider(settings, "openrouter");
-  assert.equal(settings.model, "openai/gpt-4.1-mini");
+  assert.equal(settings.model, "custom/router-model");
   settings = parseSettings({ ...settings, model: "another/model" });
   const reloaded = parseSettings(JSON.parse(JSON.stringify(settings)));
   assert.equal(selectProvider(reloaded, "openai").model, "gpt-4.1");
-  assert.equal(selectProvider(reloaded, "ollama").model, "local-custom:8b");
+  assert.equal(selectProvider(reloaded, "openrouter").model, "another/model");
   const keys = createSessionKeys();
   keys.set("openai", "  openai-test-key  ");
   assert.equal(keys.get("openrouter"), "");
   keys.set("openrouter", "router-test-key");
   assert.equal(keys.get("openai"), "openai-test-key");
   assert.equal(keys.get("openrouter"), "router-test-key");
-  keys.set("ollama", "access-key");
-  assert.equal(keys.get("ollama"), "access-key");
+  keys.set("anthropic", "claude-key");
+  assert.equal(keys.get("anthropic"), "claude-key");
+  assert.equal(keys.get("openai"), "openai-test-key");
   assert.equal(createSessionKeys().get("openai"), "");
   keys.set("openai", "");
   assert.equal(keys.get("openai"), "");
@@ -43,15 +44,17 @@ test("partial and legacy settings recover without dropping valid preferences or 
   assert.ok(!JSON.stringify(parsed).includes("secret"));
   assert.equal(parseSettings({ provider: "openai" }).model, "gpt-4.1-mini");
   const legacy = parseSettings({ ...defaults, provider: "demo", model: "", fontSize: 18 });
-  assert.equal(legacy.provider, "ollama");
+  assert.equal(legacy.provider, "openrouter");
   assert.equal(legacy.model, defaults.model);
   assert.equal(legacy.fontSize, 18);
+  assert.equal(parseSettings({ ...defaults, provider: "ollama", model: "llama3.2" }).provider, "openrouter");
 });
 
 test("numeric commits clamp both ends and reject empty or nonfinite drafts", () => {
   assert.equal(normalizeNumber("", 1600, limits.maxTokens), 1600);
   assert.equal(normalizeNumber("Infinity", 1600, limits.maxTokens), 1600);
   assert.equal(normalizeNumber("NaN", 1600, limits.maxTokens), 1600);
+  assert.equal(normalizeNumber("0", 1600, limits.maxTokens), 0);
   assert.equal(normalizeNumber("1", 1600, limits.maxTokens), 512);
   assert.equal(normalizeNumber("16384", 1600, limits.maxTokens), 8192);
   assert.equal(normalizeNumber("2048", 1600, limits.maxTokens), 2048);
@@ -68,4 +71,6 @@ test("budget estimates use the actual engine instructions and scenario, then res
   assert.ok(estimate > defaults.maxTokens + instructions.length / 3);
   assert.ok(estimateTurnTokens({ ...defaults, prompt: "Scenario detail. ".repeat(80) }, context) > estimate);
   assert.equal(estimateTurnTokens({ ...defaults, maxTokens: 8192 }, context) - estimate, 8192 - defaults.maxTokens);
+  assert.equal(estimateTurnTokens({ ...defaults, maxTokens: 0 }, context) - estimate, -defaults.maxTokens);
+  assert.equal(parseSettings({ ...defaults, maxTokens: 0 }).maxTokens, 0);
 });

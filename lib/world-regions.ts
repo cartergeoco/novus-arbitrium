@@ -3,6 +3,7 @@ import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson"
 import { sealBorder, simplifyRing } from "./geometry";
 import type { Campaign, FlagSpec, Land, Nation } from "./game";
 import { deriveFlag, derivePolity, heritageFlag } from "./flags";
+import { DEPENDENCIES } from "./dependencies";
 
 export type RegionFeature = Feature<Polygon | MultiPolygon, {
   id: string;
@@ -23,8 +24,19 @@ export type RegionState = {
   geometry?: Land["geometry"];
   name?: string;
   origin?: string;
+  type?: "State" | "Province" | "Territory" | "Commonwealth";
 };
 export type RegionView = RegionFeature & { state: RegionState };
+
+export function regionType(region: RegionView): NonNullable<RegionState["type"]> {
+  if (region.state.type) return region.state.type;
+  if (DEPENDENCIES[region.properties.country]) return "Territory";
+  const source = region.properties.type.toLowerCase();
+  if (source.includes("state")) return "State";
+  if (source.includes("commonwealth")) return "Commonwealth";
+  if (source.includes("territor") || source.includes("overseas")) return "Territory";
+  return "Province";
+}
 
 export function regionViews(c: Campaign, atlas: RegionAtlas): RegionView[] {
   const removed = new Set(c.removedRegions || []);
@@ -33,8 +45,10 @@ export function regionViews(c: Campaign, atlas: RegionAtlas): RegionView[] {
     .map((f) => ({
       ...f,
       state: c.regions?.[f.properties.id] || {
-        owner: f.properties.country,
-        controller: f.properties.country,
+        owner: c.nations[f.properties.country] ? f.properties.country
+          : c.nations[DEPENDENCIES[f.properties.country]] ? DEPENDENCIES[f.properties.country] : "",
+        controller: c.nations[f.properties.country] ? f.properties.country
+          : c.nations[DEPENDENCIES[f.properties.country]] ? DEPENDENCIES[f.properties.country] : "",
         damage: 0,
         unrest: 0,
       },
@@ -47,7 +61,7 @@ export function regionViews(c: Campaign, atlas: RegionAtlas): RegionView[] {
         id,
         name: state.name || "New district",
         country: state.origin || state.owner,
-        type: "Territory",
+        type: state.type || "Territory",
         population: null,
       },
       geometry: state.geometry,
@@ -101,8 +115,9 @@ export function changeRegion(
   c: Campaign,
   atlas: RegionAtlas,
   id: string,
-  mode: "occupy" | "liberate" | "cede",
+  mode: "occupy" | "liberate" | "cede" | "abandon",
   actor: string,
+  type?: RegionState["type"],
 ): Campaign {
   const region = existingRegion(c, atlas, id);
   if (!region || !c.nations[actor]) return c;
@@ -111,16 +126,33 @@ export function changeRegion(
   if (mode === "cede" && actor === state.owner) return c;
   const next = { ...c, regions: { ...(c.regions || {}) } };
   if (mode === "cede") {
-    const moved = moveGeometry(c.nations, state.owner, actor, region.geometry);
+    let moved = state.owner ? moveGeometry(c.nations, state.owner, actor, region.geometry) : null;
+    if (!state.owner) {
+      const joined = union(featureCollection([feature(c.nations[actor].geometry), feature(region.geometry)]));
+      if (joined) moved = { ...c.nations, [actor]: { ...c.nations[actor], geometry: sealBorder(joined.geometry) } };
+    }
     if (!moved) return c;
     next.nations = moved;
-    next.regions[id] = { ...state, owner: actor, controller: actor, unrest: Math.min(100, state.unrest + 8) };
+    next.regions[id] = { ...state, owner: actor, controller: actor, type: type || (moved[state.owner] ? state.type : "Territory"), unrest: Math.min(100, state.unrest + 8) };
+  } else if (mode === "abandon") {
+    if (actor !== state.owner) return c;
+    const owner = c.nations[actor];
+    const land = feature(owner.geometry);
+    const cut = intersect(featureCollection([land, feature(region.geometry)]));
+    if (!cut) return c;
+    const left = difference(featureCollection([land, feature(sealBorder(cut.geometry))]));
+    const share = Math.max(0, Math.min(1, area(cut) / area(land)));
+    next.nations = { ...c.nations };
+    if (left) next.nations[actor] = { ...owner, geometry: sealBorder(left.geometry), population: Math.round(owner.population * (1 - share)), gdp: owner.gdp * (1 - share) };
+    else delete next.nations[actor];
+    next.regions[id] = { ...state, owner: "", controller: "", unrest: 0, damage: 0, identity: undefined, politicalClimate: undefined, type: undefined };
   } else {
+    const territory = regionType(region) === "Territory";
     next.regions[id] = {
       ...state,
       controller: mode === "liberate" ? state.owner : actor,
-      damage: Math.min(100, state.damage + (mode === "occupy" ? 12 : 4)),
-      unrest: Math.min(100, state.unrest + (mode === "occupy" ? 10 : 0)),
+      damage: Math.min(100, state.damage + (mode === "occupy" ? territory ? 8 : 12 : 4)),
+      unrest: Math.min(100, state.unrest + (mode === "occupy" ? territory ? 6 : 10 : 0)),
     };
   }
   return next;
@@ -130,10 +162,10 @@ export function changeRegionProfile(
   c: Campaign,
   atlas: RegionAtlas,
   id: string,
-  delta: { unrest: number; damage: number; identity?: string; politicalClimate?: string },
+  delta: { unrest: number; damage: number; identity?: string; politicalClimate?: string; type?: RegionState["type"] },
 ): Campaign {
   const region = existingRegion(c, atlas, id);
-  if (!region) return c;
+  if (!region || (!region.state.owner && !region.state.controller)) return c;
   return {
     ...c,
     regions: {
@@ -144,6 +176,7 @@ export function changeRegionProfile(
         damage: Math.max(0, Math.min(100, region.state.damage + delta.damage)),
         identity: delta.identity || region.state.identity,
         politicalClimate: delta.politicalClimate || region.state.politicalClimate,
+        type: delta.type || region.state.type,
       },
     },
   };
@@ -163,6 +196,7 @@ export function foundNation(
     goal?: string;
     flag?: FlagSpec;
     civilWar?: boolean;
+    suzerain?: string;
   },
 ): Campaign {
   const parent = c.nations[options.parent];
@@ -199,6 +233,7 @@ export function foundNation(
     iso: "",
     name: options.name.trim(),
     original: false,
+    suzerain: options.suzerain && c.nations[options.suzerain] ? options.suzerain : undefined,
     color: parent.color,
     center: [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2],
     geometry: sealBorder(cut.geometry),
@@ -249,7 +284,7 @@ export function foundNation(
   }
   const regions = { ...(c.regions || {}) };
   for (const region of selected)
-    regions[region.properties.id] = { ...region.state, owner: id, controller: id, unrest: Math.min(100, region.state.unrest + (options.civilWar ? 20 : 3)) };
+    regions[region.properties.id] = { ...region.state, owner: id, controller: id, type: options.suzerain ? "Commonwealth" : region.state.type, unrest: Math.min(100, region.state.unrest + (options.civilWar ? 20 : regionType(region) === "Territory" ? 1 : 3)), politicalClimate: options.civilWar ? "Civil war" : region.state.politicalClimate };
   const wars = [...(c.wars || [])];
   if (options.civilWar && nations[options.parent])
     wars.push({ id: crypto.randomUUID(), attackers: [id], defenders: [options.parent], goal: "Determine the successor state's independence", started: c.date, status: "active" });
@@ -263,6 +298,7 @@ export function recordTerritorySplit(
   source: string,
   target: string,
   ring: number[][],
+  sourceRemoved = false,
 ): Pick<Campaign, "regions" | "removedRegions"> {
   const simplified = simplifyRing(ring);
   const closed = simplified[0]?.[0] === simplified.at(-1)?.[0] && simplified[0]?.[1] === simplified.at(-1)?.[1]
@@ -282,7 +318,7 @@ export function recordTerritorySplit(
     const sealed = feature(sealBorder(cut.geometry));
     const share = area(sealed) / area(region);
     if (share > 0.999) {
-      regions[region.properties.id] = { ...region.state, owner: target, controller: target };
+      regions[region.properties.id] = { ...region.state, owner: target, controller: target, type: sourceRemoved ? "Territory" : region.state.type };
       continue;
     }
     const remainder = difference(featureCollection([feature(region.geometry), sealed]));
@@ -291,7 +327,7 @@ export function recordTerritorySplit(
     const base = region.properties.id + "~" + crypto.randomUUID().slice(0, 6);
     const parent = region.state.origin || region.properties.country;
     regions[base + "a"] = { ...region.state, geometry: sealBorder(remainder.geometry), name: `${region.properties.name} (remainder)`, origin: parent };
-    regions[base + "b"] = { ...region.state, owner: target, controller: target, geometry: sealed.geometry, name: `${region.properties.name} (settlement)`, origin: parent };
+    regions[base + "b"] = { ...region.state, owner: target, controller: target, type: sourceRemoved ? "Territory" : region.state.type, geometry: sealed.geometry, name: `${region.properties.name} (settlement)`, origin: parent };
   }
   return { regions, removedRegions: [...removed] };
 }

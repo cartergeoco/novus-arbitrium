@@ -19,7 +19,7 @@ const world = JSON.parse(
 const make = () => createCampaign(world, "Test timeline", "USA");
 test("all starting countries have valid identities and geometry", () => {
   const c = make();
-  assert.equal(Object.keys(c.nations).length, 241);
+  assert.ok(Object.keys(c.nations).length < world.features.length);
   assert.equal(c.turn, 1);
   assert.equal(c.status, "active");
   for (const n of Object.values(c.nations)) {
@@ -33,7 +33,9 @@ test("all starting countries have valid identities and geometry", () => {
   assert.equal(c.nations.USA.goal, "Alliance leadership");
   assert.equal(c.nations.CHE.goal, "Armed neutrality");
   assert.equal(c.nations.BEL.ideology, "Constitutional monarchy");
-  assert.match(c.nations.GUM.dossier || "", /United States/);
+  assert.equal(c.nations.GUM, undefined);
+  assert.equal(c.nations.PRI, undefined);
+  assert.equal(c.nations.GRL, undefined);
 });
 test("a decision advances the calendar and updates stats without mutating previous state", () => {
   const c = make(),
@@ -130,7 +132,7 @@ test("transfer to an existing nation merges geometry and conserves population", 
     c.nations.USA.population + c.nations.CAN.population,
   );
   assert.ok(next.CAN.population > c.nations.CAN.population);
-  assert.equal(Object.keys(next).length, 241);
+  assert.equal(Object.keys(next).length, Object.keys(c.nations).length);
 });
 test("failed territorial operations are atomic", () => {
   const c = make(),

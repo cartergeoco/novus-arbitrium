@@ -28,7 +28,7 @@ import {
   Eye,
   EyeSlash,
 } from "@phosphor-icons/react";
-import { limits, normalizeNumber, selectProvider, type Settings as SettingsType } from "@/lib/settings";
+import { limits, normalizeNumber, providerDefaults, providerLabels, providerSchema, selectProvider, type Settings as SettingsType } from "@/lib/settings";
 import { useProviderConnection } from "@/hooks/use-provider-connection";
 export function Choice({
   value,
@@ -87,7 +87,7 @@ export default function Settings({
       const value = event.target.value;
       setNumberDraft({ field, value });
       const parsed = Number(value);
-      if (value.trim() && Number.isInteger(parsed) && parsed >= limits[field].min && parsed <= limits[field].max) set(field, parsed);
+      if (value.trim() && Number.isInteger(parsed) && (parsed === 0 || (parsed >= limits[field].min && parsed <= limits[field].max))) set(field, parsed);
     },
     onBlur: (event: React.FocusEvent<HTMLInputElement>) => {
       set(field, normalizeNumber(event.target.value, settings[field], limits[field]));
@@ -177,12 +177,15 @@ export default function Settings({
                 Response token limit
                 <input
                   type="number"
-                  min={limits.maxTokens.min}
+                  min={0}
                   max={limits.maxTokens.max}
                   step="1"
                   {...numberInput("maxTokens")}
                 />
               </label>
+              <p className="hint">
+                Use 0 for no limit. Any other value stops the model after that many tokens.
+              </p>
               <label>
                 Context: {settings.contextNations} nations
                 <Slider
@@ -237,11 +240,7 @@ export default function Settings({
                     setShowKey(false);
                     onChange(selectProvider(settings, v as SettingsType["provider"]));
                   }}
-                  options={[
-                    { value: "ollama", label: "Ollama" },
-                    { value: "openrouter", label: "OpenRouter" },
-                    { value: "openai", label: "OpenAI" },
-                  ]}
+                  options={providerSchema.options.map((provider) => ({ value: provider, label: providerLabels[provider] }))}
                   label="Provider"
                 />
               </label>
@@ -254,13 +253,7 @@ export default function Settings({
                   list={modelListId}
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder={
-                    settings.provider === "ollama"
-                      ? "llama3.2"
-                      : settings.provider === "openrouter"
-                        ? "provider/model-name"
-                        : "gpt-4.1-mini"
-                  }
+                  placeholder={providerDefaults[settings.provider]}
                   maxLength={120}
                 />
                 <datalist id={modelListId}>
@@ -268,7 +261,7 @@ export default function Settings({
                 </datalist>
               </label>
               <label>
-                {settings.provider === "ollama" ? "Ollama access key" : "API key"}
+                API key
                 <span className="secret-field">
                 <input
                   type={showKey ? "text" : "password"}
@@ -277,16 +270,14 @@ export default function Settings({
                   spellCheck={false}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={settings.provider === "ollama" ? "Required on the public site; optional in local development" : "Paste your provider key"}
+                  placeholder="Paste your provider key"
                 />
                 <button type="button" aria-label={showKey ? "Hide API key" : "Show API key"} aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeSlash /> : <Eye />}</button>
                 </span>
               </label>
               <p className="hint" role="status">
                 {connection.message}{" "}
-                {settings.provider === "ollama"
-                  ? "The site server contacts Ollama. Local development needs no key. A public deployment requires the access key configured on the server. It stays in memory for this tab and is never included in saves or exports."
-                  : "Keys stay in memory for this tab, separately for each provider. Sent through this site's server for verification and decisions. Never included in saves or exports. Provider charges apply to generation."}
+                Keys stay in memory for this tab, separately for each provider. Sent through this site&apos;s server for verification and decisions. Never included in saves or exports. Provider charges apply to generation.
               </p>
             </TabsContent>
             <TabsContent value="Appearance">
@@ -349,7 +340,7 @@ export default function Settings({
             </TabsContent>
             <TabsContent value="Help">
               <h3>
-                Novus Arbitrium <span className="tag">ALPHA 0.1</span>
+                Novus Arbitrium <span className="tag">FIRESTORM v2.0</span>
               </h3>
               <p>
                 Choose a nation, describe a decision, and advance your timeline.
@@ -389,8 +380,9 @@ export default function Settings({
               <p>
                 Created for Carter Geoco. Game source: GPL-3.0-only. Map:
                 Natural Earth (public domain). Leaflet, Geoman, Turf and Phosphor
-                provide maps, geometry and icons. Country flags are the ISO
-                3166-1 SVGs from iso3166-flags. Fonts are Poppins and IBM Plex Mono.
+                provide maps, geometry and icons. Country and regional flags are
+                ISO 3166-1 and ISO 3166-2 assets from iso3166-flags. Fonts are
+                Poppins and IBM Plex Mono.
               </p>
               <a
                 href="https://github.com/cartergeoco/novus-arbitrium"

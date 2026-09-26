@@ -1,13 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { area, feature } from "@turf/turf";
 import { applyTurn, compactContext, createCampaign, defaults, demoTurn } from "../lib/game";
-import { regionViews, type RegionAtlas } from "../lib/world-regions";
+import { changeRegion, regionType, regionViews, type RegionAtlas } from "../lib/world-regions";
+import { parseCampaign } from "../lib/validation";
 import { flagColors } from "../lib/flag";
 
 const world = JSON.parse(readFileSync(new URL("../public/data/world.json", import.meta.url), "utf8"));
 const atlas = JSON.parse(readFileSync(new URL("../public/data/region-atlas.json", import.meta.url), "utf8")) as RegionAtlas;
+const regionalFlags = JSON.parse(readFileSync(new URL("../public/data/region-flags.json", import.meta.url), "utf8")) as { flags: Record<string, string> };
 const make = () => createCampaign(world, "Regional history", "USA");
 
 test("the 2026 regional atlas covers each starting country with stable IDs", () => {
@@ -148,4 +150,78 @@ test("AI context lists relevant regions, wars, and earlier history without geome
   assert.ok(context.nations.some((n) => n.id === "MEX"));
   assert.ok(context.regions.length <= 90);
   assert.ok(context.regions.every((r) => !("geometry" in r)));
+});
+
+test("dependent holdings belong to their suzerain and old version-one saves still parse", () => {
+  const c = make();
+  assert.equal(c.nations.PRI, undefined);
+  assert.equal(c.nations.GRL, undefined);
+  assert.equal(regionViews(c, atlas).find((r) => r.properties.id === "PRI-5260")?.state.owner, "USA");
+  const greenland = regionViews(c, atlas).find((r) => r.properties.country === "GRL");
+  assert.equal(greenland?.state.owner, "DNK");
+  assert.equal(regionType(greenland!), "Territory");
+  assert.equal(parseCampaign({ ...c, firestorm: undefined }).version, 1);
+  assert.equal(regionalFlags.flags["USA-3520"], "/flags/regions/US-AZ.webp");
+  assert.equal(regionalFlags.flags["PRI-5260"], "/flags/regions/US-PR.webp");
+  assert.equal(regionalFlags.flags["GUM+00?"], "/flags/regions/US-GU.webp");
+  assert.equal(regionalFlags.flags["ASM-5002"], "/flags/regions/US-AS.webp");
+});
+
+test("ISO 3166-2 region flags are served from bundled local assets", () => {
+  const paths = new Set(Object.values(regionalFlags.flags));
+  assert.ok(paths.size > 2000);
+  for (const path of paths) {
+    assert.match(path, /^\/flags\/regions\/[A-Z]{2}-[A-Z0-9]+\.webp$/);
+    assert.ok(existsSync(new URL(`../public${path}`, import.meta.url)), `${path} is missing`);
+  }
+});
+
+test("occupation keeps draining the holder until peace records the land outcome", () => {
+  const c = make();
+  const invasion = demoTurn(c, "Mexico attacks Arizona", defaults);
+  invasion.conflicts = [{ action: "start", attacker: "MEX", defender: "USA", goal: "Control Arizona" }];
+  invasion.regionActions = [{ region: "USA-3520", mode: "occupy", actor: "MEX", reason: "The army holds Arizona" }];
+  const first = applyTurn(c, invasion, "Attack", defaults, 0, atlas);
+  const second = applyTurn(first, demoTurn(first, "War continues", defaults), "Wait", defaults, 0, atlas);
+  assert.ok(second.regions!["USA-3520"].damage > first.regions!["USA-3520"].damage);
+  assert.ok(second.regions!["USA-3520"].unrest > first.regions!["USA-3520"].unrest);
+  assert.ok(second.nations.MEX.stability < first.nations.MEX.stability);
+  const peace = demoTurn(second, "An armistice", defaults);
+  peace.conflicts = [{ action: "end", attacker: "MEX", defender: "USA", goal: "Armistice" }];
+  const ended = applyTurn(second, peace, "Peace", defaults, 0, atlas);
+  assert.equal(ended.wars![0].outcome, "occupied");
+  assert.equal(ended.wars![0].ended, ended.date);
+  assert.equal(ended.regions!["USA-3520"].owner, "USA");
+  assert.equal(ended.regions!["USA-3520"].controller, "MEX");
+});
+
+test("a declaration cannot close a war in its own turn, and subsidiary attacks bring in the suzerain", () => {
+  const c = make();
+  c.nations.CAN.suzerain = "GBR";
+  const turn = demoTurn(c, "Mexico declares war on Canada", defaults);
+  turn.conflicts = [
+    { action: "start", attacker: "MEX", defender: "CAN", goal: "Border dispute" },
+    { action: "end", attacker: "MEX", defender: "CAN", goal: "Immediate peace" },
+  ];
+  const next = applyTurn(c, turn, "Declaration", defaults, 0, atlas);
+  assert.equal(next.wars?.[0].status, "active");
+  assert.ok(next.wars?.[0].defenders.includes("GBR"));
+  const subsidiaryAttack = demoTurn(c, "Canada attacks Mexico", defaults);
+  subsidiaryAttack.conflicts = [{ action: "start", attacker: "CAN", defender: "MEX", goal: "Conquest" }];
+  assert.equal(applyTurn(c, subsidiaryAttack, "Attack", defaults, 0, atlas).wars?.length, 0);
+});
+
+test("abandoned land is empty until it is occupied or legally incorporated", () => {
+  const c = make();
+  const empty = changeRegion(c, atlas, "USA-3520", "abandon", "USA");
+  const region = regionViews(empty, atlas).find((r) => r.properties.id === "USA-3520")!;
+  assert.equal(region.state.owner, "");
+  assert.equal(region.state.controller, "");
+  assert.equal(region.state.unrest, 0);
+  assert.ok(area(feature(empty.nations.USA.geometry)) < area(feature(c.nations.USA.geometry)));
+  const occupied = changeRegion(empty, atlas, "USA-3520", "occupy", "MEX");
+  assert.equal(occupied.regions!["USA-3520"].owner, "");
+  assert.equal(occupied.regions!["USA-3520"].controller, "MEX");
+  const incorporated = changeRegion(occupied, atlas, "USA-3520", "cede", "MEX");
+  assert.equal(incorporated.regions!["USA-3520"].owner, "MEX");
 });

@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { POST } from "../app/api/turn/route";
 import { estimateTurnTokens } from "../lib/generation";
+import { endpoints } from "../lib/providers";
+import { providerDefaults, providerSchema } from "../lib/settings";
 const request = (body: unknown, origin = "http://localhost") =>
   new Request("http://localhost/api/turn", {
     method: "POST",
@@ -108,6 +110,26 @@ test("OpenAI sends the actual scenario, context and supported temperature with t
     prompt: "Slow and realistic change.", maxTokens: 2048, temperature: 0 }))).status, 200);
 });
 
+test("a response limit of zero removes the cap instead of clamping it", async (t) => {
+  t.mock.method(globalThis, "fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.max_completion_tokens, undefined);
+    assert.equal(body.max_tokens, undefined);
+    return completion();
+  });
+  assert.equal((await POST(request({ ...valid, maxTokens: 0 }))).status, 200);
+});
+
+test("Claude still sends a high ceiling when the response limit is unlimited", async (t) => {
+  t.mock.method(globalThis, "fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.max_tokens, 64000);
+    return Response.json({ content: [{ type: "text", text: JSON.stringify(turn) }], stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 10 } });
+  });
+  assert.equal((await POST(request({ ...valid, provider: "anthropic", model: "claude-sonnet-4-6", maxTokens: 0 }))).status, 200);
+});
+
 test("reasoning models omit unsupported sampling instead of rejecting the saved temperature", async (t) => {
   t.mock.method(globalThis, "fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
@@ -119,36 +141,37 @@ test("reasoning models omit unsupported sampling instead of rejecting the saved 
     assert.equal((await POST(request({ ...valid, model }))).status, 200);
 });
 
-test("Ollama uses native JSON, output and context limits without any authorization header", async (t) => {
+test("Claude uses native Messages with separate system instructions and reports usage", async (t) => {
   t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
-    assert.equal(new Headers(init?.headers).get("Authorization"), null);
+    assert.equal(url, "https://api.anthropic.com/v1/messages");
+    assert.equal(new Headers(init?.headers).get("anthropic-version"), "2023-06-01");
     const body = JSON.parse(String(init?.body));
-    if (String(url).endsWith("/show")) return Response.json({ capabilities: ["completion"], model_info: { "llama.context_length": 8192 } });
-    assert.equal(url, "http://127.0.0.1:11434/api/chat");
-    assert.equal(body.stream, false);
-    assert.equal(body.format.type, "object");
-    assert.deepEqual(body.format.properties.category.enum, ["Domestic", "Diplomacy", "Economy", "Military", "World"]);
-    assert.equal(body.format.properties.effects.items.properties.stability.maximum, 20);
-    assert.equal(body.format.properties.regionEffects.maxItems, 0);
-    assert.equal(body.options.temperature, 0.5);
-    assert.equal(body.options.num_predict, 1024);
-    assert.ok(body.options.num_ctx >= estimateTurnTokens(valid, valid.context));
-    assert.ok(body.options.num_ctx <= 8192);
+    assert.equal(body.max_tokens, 1024);
+    assert.equal(body.messages[0].role, "user");
+    assert.ok(body.system.includes("JSON"));
     assert.equal(body.response_format, undefined);
-    assert.equal(body.max_completion_tokens, undefined);
-    return Response.json({ message: { content: JSON.stringify(turn) }, prompt_eval_count: 123, eval_count: 45 });
+    return Response.json({ content: [{ type: "text", text: JSON.stringify(turn) }], stop_reason: "end_turn",
+      usage: { input_tokens: 123, output_tokens: 45 } });
   });
-  const response = await POST(request({ ...valid, provider: "ollama", model: "local-model" }));
+  const response = await POST(request({ ...valid, provider: "anthropic", model: "claude-sonnet-4-6" }));
   assert.equal(response.status, 200);
   assert.equal((await response.json() as { tokens: number }).tokens, 168);
 });
 
-test("Ollama refuses a context that would silently lose scenario instructions", async (t) => {
-  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json({ model_info: { "llama.context_length": 1024 } }));
-  const response = await POST(request({ ...valid, provider: "ollama" }));
-  assert.equal(response.status, 400);
-  assert.match((await response.json() as { error: string }).error, /context window/);
-  assert.equal(fetch.mock.callCount(), 1);
+test("each direct public provider reaches its own chat endpoint with a valid turn", async (t) => {
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push(String(url));
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${valid.key}`);
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.max_completion_tokens ?? body.max_tokens, valid.maxTokens);
+    if (String(url) === endpoints.deepseek) assert.deepEqual(body.thinking, { type: "disabled" });
+    return completion();
+  });
+  const providers = providerSchema.options.filter((provider) => provider !== "openrouter" && provider !== "anthropic");
+  for (const provider of providers)
+    assert.equal((await POST(request({ ...valid, provider, model: providerDefaults[provider] }))).status, 200, provider);
+  assert.deepEqual(calls, providers.map((provider) => endpoints[provider]));
 });
 
 test("OpenRouter sends only supported generation parameters with its own endpoint", async (t) => {
@@ -201,7 +224,7 @@ test("providers without usage still report a conservative token estimate", async
   assert.equal(body.usageEstimated, true);
 });
 
-test("timeouts, unavailable local servers and rejected keys return actionable errors", async (t) => {
+test("timeouts, unreachable providers and rejected keys return actionable errors", async (t) => {
   let mode = "timeout";
   t.mock.method(globalThis, "fetch", async () => {
     if (mode === "timeout") throw new DOMException("test timeout", "TimeoutError");
@@ -210,8 +233,8 @@ test("timeouts, unavailable local servers and rejected keys return actionable er
   });
   assert.equal((await POST(request(valid))).status, 504);
   mode = "offline";
-  const local = await POST(request({ ...valid, provider: "ollama" }));
-  assert.match((await local.json() as { error: string }).error, /start Ollama/);
+  const offline = await POST(request({ ...valid, provider: "groq" }));
+  assert.match((await offline.json() as { error: string }).error, /Cannot reach the provider/);
   mode = "key";
   const rejected = await POST(request(valid));
   assert.match((await rejected.json() as { error: string }).error, /rejected this API key/);

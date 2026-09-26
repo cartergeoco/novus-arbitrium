@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { providerSchema, supportsTemperature, type Provider } from "./settings";
+import { providerLabels, providerSchema, supportsTemperature, type Provider } from "./settings";
 
 export const connectionSchema = z.object({
   provider: providerSchema,
@@ -19,56 +19,24 @@ export type ProviderInfo = {
 export const endpoints: Record<Provider, string> = {
   openai: "https://api.openai.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
-  ollama: "http://127.0.0.1:11434/api/chat",
+  anthropic: "https://api.anthropic.com/v1/messages",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  groq: "https://api.groq.com/openai/v1/chat/completions",
+  mistral: "https://api.mistral.ai/v1/chat/completions",
+  xai: "https://api.x.ai/v1/chat/completions",
+  deepseek: "https://api.deepseek.com/chat/completions",
+  together: "https://api.together.xyz/v1/chat/completions",
+  cohere: "https://api.cohere.ai/compatibility/v1/chat/completions",
+  cerebras: "https://api.cerebras.ai/v1/chat/completions",
 };
-/** Server-only. Local Ollama stays on loopback. A remote endpoint must be HTTPS and is never sent to the browser. */
-export function ollamaBase() {
-  const raw = process.env.OLLAMA_BASE_URL?.trim();
-  if (!raw) return "http://127.0.0.1:11434";
-  let url: URL;
-  try { url = new URL(raw); }
-  catch { throw new ProviderError("OLLAMA_BASE_URL is not a valid URL.", 500); }
-  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
-  if (!local && url.protocol !== "https:") throw new ProviderError("The private Ollama endpoint must use HTTPS.", 500);
-  if (url.username || url.password) throw new ProviderError("Put the Ollama credential in OLLAMA_TOKEN, not in the URL.", 500);
-  if (url.search || url.hash) throw new ProviderError("OLLAMA_BASE_URL cannot contain a query or fragment.", 500);
-  return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
-}
-function remoteOllama() {
-  const { hostname } = new URL(ollamaBase());
-  return hostname !== "127.0.0.1" && hostname !== "localhost";
-}
-/** A public deployment must never spend server-side Ollama resources for an anonymous caller. */
-export async function authorizeProvider(data: Connection) {
-  if (data.provider !== "ollama" || (!remoteOllama() && process.env.NODE_ENV !== "production")) return;
-  const secret = process.env.OLLAMA_CLIENT_KEY?.trim();
-  if (!secret || secret.length < 32)
-    throw new ProviderError("Ollama is unavailable until the server has an OLLAMA_CLIENT_KEY of at least 32 characters.", 503);
-  if (!data.key) throw new ProviderError("Enter the Ollama access key in Settings → API.", 403);
-  // Compare fixed-length digests so the comparison does not reveal a matching prefix.
-  const digest = async (value: string) => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
-  const [expected, actual] = await Promise.all([digest(secret), digest(data.key)]);
-  let mismatch = 0;
-  for (let i = 0; i < expected.length; i++) mismatch |= expected[i] ^ actual[i];
-  if (mismatch) throw new ProviderError("Ollama access key rejected.", 403);
-}
-export function ollamaUrl(path: "/api/chat" | "/api/tags" | "/api/show") {
-  return `${ollamaBase()}${path}`;
-}
 export function providerEndpoint(provider: Provider) {
-  return provider === "ollama" ? ollamaUrl("/api/chat") : endpoints[provider];
+  return endpoints[provider];
 }
 export function providerHeaders(data: Connection) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (data.provider === "ollama") {
-    const remote = remoteOllama();
-    const token = process.env.OLLAMA_TOKEN?.trim();
-    if (remote && !token) throw new ProviderError("The server is missing OLLAMA_TOKEN for the private Ollama endpoint.", 500);
-    if (remote && token) headers.Authorization = `Bearer ${token}`;
-    return headers;
-  }
   if (!data.key) throw new ProviderError("Add an API key in Settings → API first.", 400);
   headers.Authorization = `Bearer ${data.key}`;
+  if (data.provider === "anthropic") headers["anthropic-version"] = "2023-06-01";
   return headers;
 }
 export class ProviderError extends Error {
@@ -78,12 +46,10 @@ export function providerError(status: number, provider: Provider) {
   if (status === 401) return "The provider rejected this API key. Update it in Settings → API.";
   if (status === 403) return "This key does not have access to the selected model. Check its permissions in your provider account.";
   if (status === 402) return "The provider has insufficient credits. Add credits in your provider account.";
-  if (status === 404) return provider === "ollama"
-    ? "This Ollama model is not installed. Select an installed model in Settings → API or pull it with Ollama first."
-    : "This model is unavailable to your account. Check the Model ID in Settings → API.";
+  if (status === 404) return "This model is unavailable to your account. Check the Model ID in Settings → API.";
   if (status === 429) return "The provider rate limit or credit limit was reached. Try again later or check your provider account.";
   if (status === 400 || status === 422) return "The model rejected these generation settings. Check the Model ID, response limit and JSON-output support.";
-  return `The provider returned ${status}. Try again later or check your provider account.`;
+  return `${providerLabels[provider]} returned ${status}. Try again later or check your provider account.`;
 }
 export async function fetchProvider(url: string, init: RequestInit, provider: Provider) {
   // Workers supports manual redirects, but rejects redirect: "error".
@@ -92,7 +58,7 @@ export async function fetchProvider(url: string, init: RequestInit, provider: Pr
   if (!response.ok) throw new ProviderError(providerError(response.status, provider));
   return response;
 }
-export function requestError(error: unknown, provider?: Provider) {
+export function requestError(error: unknown) {
   if (error instanceof ProviderError) return { error: error.message, status: error.status };
   if (error instanceof Error && "status" in error && (error.status === 403 || error.status === 503))
     return { error: error.message, status: error.status };
@@ -102,9 +68,7 @@ export function requestError(error: unknown, provider?: Provider) {
     return { error: "The provider timed out. Your world has not changed. Try a smaller model or response limit.", status: 504 };
   if (error instanceof Error && error.name === "AbortError")
     return { error: "The request was cancelled. Your world has not changed.", status: 499 };
-  return { error: provider === "ollama"
-    ? "Cannot reach Ollama. Locally, start Ollama on 127.0.0.1:11434. On the deployed site, the private endpoint and the gateway on your computer must both be running."
-    : "Cannot reach the provider. Check your connection and try again. Your world has not changed.", status: 502 };
+  return { error: "Cannot reach the provider. Check your connection and try again. Your world has not changed.", status: 502 };
 }
 export function jsonResponse(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -173,41 +137,95 @@ export async function openRouterInfo(data: Connection, signal: AbortSignal): Pro
   };
 }
 
-const ollamaName = (name: string) => name.includes(":") ? name : `${name}:latest`;
 export async function inspectProvider(data: Connection, signal: AbortSignal): Promise<ProviderInfo> {
   const headers = providerHeaders(data);
-  if (data.provider === "ollama") {
-    const response = await fetchProvider(ollamaUrl("/api/tags"), { headers, signal }, "ollama");
-    const list = z.object({ models: z.array(z.object({
-      name: z.string(), capabilities: z.array(z.string()).optional(),
-    })) }).parse(await readProviderJson(response)).models;
-    const models = list.filter((model) => !model.capabilities || model.capabilities.includes("completion")).map((model) => model.name);
-    const connected = models.some((name) => ollamaName(name) === ollamaName(data.model));
-    return { models, connected, temperature: true, jsonOutput: true,
-      message: connected ? "Ollama is reachable and this model is installed."
-        : models.length ? `Model not installed. Available: ${models.slice(0, 6).join(", ")}.`
-          : "No chat models are installed. Pull a model with Ollama, then enter its name here.",
-    };
-  }
   if (data.provider === "openrouter") {
     // /models can be public; validate credentials separately without generating tokens.
     const response = await fetchProvider("https://openrouter.ai/api/v1/key", { headers, signal }, data.provider);
     z.object({ data: z.object({}) }).parse(await readProviderJson(response));
     return openRouterInfo(data, signal);
   }
-  const response = await fetchProvider(`https://api.openai.com/v1/models/${encodeURIComponent(data.model)}`, { headers, signal }, data.provider);
-  z.object({ id: z.string() }).parse(await readProviderJson(response));
-  return { models: [data.model], connected: true, temperature: supportsTemperature(data.provider, data.model), jsonOutput: true,
-    message: "API key and model access verified. Use a Chat Completions model with JSON output; generation requires available quota.",
+  const modelBase: Record<Exclude<Provider, "openrouter">, string> = {
+    openai: "https://api.openai.com/v1/models", anthropic: "https://api.anthropic.com/v1/models",
+    gemini: "https://generativelanguage.googleapis.com/v1beta/openai/models", groq: "https://api.groq.com/openai/v1/models",
+    mistral: "https://api.mistral.ai/v1/models", xai: "https://api.x.ai/v1/models",
+    deepseek: "https://api.deepseek.com/models", together: "https://api.together.xyz/v1/models",
+    cohere: "https://api.cohere.ai/v1/models", cerebras: "https://api.cerebras.ai/v1/models",
   };
+  const base = modelBase[data.provider];
+  // Per-model retrieval verifies credentials and access without spending generation tokens.
+  if (data.provider === "openai" || data.provider === "anthropic" || data.provider === "groq" || data.provider === "xai" || data.provider === "cohere") {
+    const response = await fetchProvider(`${base}/${encodeURIComponent(data.model)}`, { headers, signal }, data.provider);
+    const result = z.object({ id: z.string().optional(), name: z.string().optional() }).parse(await readProviderJson(response));
+    if (result.id !== data.model && result.name !== data.model) throw new ProviderError("The provider returned a different model.", 502);
+    return { models: [data.model], connected: true, temperature: supportsTemperature(data.provider, data.model), jsonOutput: data.provider !== "anthropic",
+      message: "API key and model access verified. Generation requires available quota." };
+  }
+  const response = await fetchProvider(base, { headers, signal }, data.provider);
+  const result = await readProviderJson(response, 16_000_000);
+  const list = z.object({ data: z.array(z.object({ id: z.string() })).optional(), models: z.array(z.object({ name: z.string().optional(), id: z.string().optional() })).optional() }).parse(result);
+  const models = (list.data?.map((item) => item.id) ?? list.models?.map((item) => item.id || item.name || "") ?? []).filter(Boolean);
+  const connected = models.includes(data.model);
+  return { models, connected, temperature: supportsTemperature(data.provider, data.model), jsonOutput: true,
+    message: connected ? "API key and model access verified. Generation requires available quota." : "Model ID not found. Choose one of the available models." };
 }
 
-export async function ollamaContextLength(data: Connection, signal: AbortSignal) {
-  const response = await fetchProvider(ollamaUrl("/api/show"), {
-    method: "POST", headers: providerHeaders(data), signal, body: JSON.stringify({ model: data.model }),
-  }, "ollama");
-  const info = z.object({ capabilities: z.array(z.string()).optional(), model_info: z.record(z.unknown()).optional() }).parse(await readProviderJson(response));
-  if (info.capabilities && !info.capabilities.includes("completion"))
-    throw new ProviderError("Select an Ollama model that supports chat completion in Settings → API.", 400);
-  return Object.entries(info.model_info || {}).find(([key, value]) => key.endsWith(".context_length") && typeof value === "number")?.[1] as number | undefined;
+export type ChatMessage = { role: string; content: string };
+export type ChatAnswer = { content?: string | null; finishReason?: string | null; refusal?: string | null; tokens?: number };
+
+/** Claude requires max_tokens. This is a ceiling the current models accept when the user asked for no cap. */
+const anthropicUnlimitedTokens = 64_000;
+
+/** 0 removes this app's cap. Chat APIs then use their own default; Claude still needs a number. */
+export function resolvedOutputTokens(maxTokens: number, provider: Provider, info?: ProviderInfo) {
+  if (maxTokens > 0) return maxTokens;
+  if (provider !== "anthropic") return undefined;
+  return info?.maxOutputTokens ?? anthropicUnlimitedTokens;
+}
+
+/** Use Claude's Messages shape; the other public APIs expose Chat Completions. */
+export function chatPayload(data: Connection & { maxTokens: number; temperature: number }, messages: ChatMessage[], info?: ProviderInfo) {
+  const cap = resolvedOutputTokens(data.maxTokens, data.provider, info);
+  if (data.provider === "anthropic") return {
+    model: data.model, max_tokens: cap, temperature: Math.min(data.temperature, 1),
+    system: messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n"),
+    messages: messages.filter((message) => message.role !== "system"),
+  };
+  const payload: Record<string, unknown> = { model: data.model, messages };
+  if (cap !== undefined) payload[data.provider === "openai" || data.provider === "cerebras" ? "max_completion_tokens" : "max_tokens"] = cap;
+  if (data.provider === "deepseek") payload.thinking = { type: "disabled" };
+  if (data.provider === "openrouter" ? info?.temperature : supportsTemperature(data.provider, data.model))
+    payload.temperature = data.temperature;
+  // JSON mode is model-dependent on routed providers. The prompt and server validation remain authoritative.
+  if (data.provider === "openai" || data.provider === "mistral" || data.provider === "deepseek" ||
+    (data.provider === "openrouter" && info?.jsonOutput)) payload.response_format = { type: "json_object" };
+  return payload;
+}
+
+const count = z.number().int().nonnegative().safe();
+const completionAnswer = z.object({
+  choices: z.array(z.object({ finish_reason: z.string().nullish(), message: z.object({
+    content: z.string().nullish(), refusal: z.string().nullish(),
+  }).optional() })).min(1),
+  usage: z.object({ total_tokens: count.optional(), prompt_tokens: count.optional(), completion_tokens: count.optional() }).optional(),
+});
+const claudeAnswer = z.object({
+  content: z.array(z.object({ type: z.string(), text: z.string().optional() })),
+  stop_reason: z.string().nullish(),
+  usage: z.object({ input_tokens: count, output_tokens: count }),
+});
+export function parseChatAnswer(provider: Provider, raw: unknown): ChatAnswer | null {
+  if (provider === "anthropic") {
+    const result = claudeAnswer.safeParse(raw);
+    if (!result.success) return null;
+    return { content: result.data.content.filter((part) => part.type === "text").map((part) => part.text || "").join(""),
+      finishReason: result.data.stop_reason, tokens: result.data.usage.input_tokens + result.data.usage.output_tokens };
+  }
+  const result = completionAnswer.safeParse(raw);
+  if (!result.success) return null;
+  const choice = result.data.choices[0];
+  const usage = result.data.usage;
+  return { content: choice.message?.content, finishReason: choice.finish_reason, refusal: choice.message?.refusal,
+    tokens: usage?.total_tokens ?? (usage?.prompt_tokens !== undefined && usage.completion_tokens !== undefined
+      ? usage.prompt_tokens + usage.completion_tokens : undefined) };
 }

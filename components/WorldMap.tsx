@@ -159,6 +159,9 @@ type Props = {
   onDraw: (ring: number[][]) => void;
   regions: FeatureCollection | null;
   occupations?: RegionView[];
+  emptyRegions?: RegionView[];
+  highlightedNations?: string[];
+  onHoverRegion?: (id: string | null) => void;
   selectedRegion?: string | null;
   focusRegion?: RegionView | null;
   onSelectRegion?: (id: string) => void;
@@ -175,6 +178,7 @@ export default function WorldMap(props: Props) {
     previewLayer = useRef<Leaflet.LayerGroup | null>(null),
     regionLayer = useRef<Leaflet.GeoJSON | null>(null),
     occupationLayer = useRef<Leaflet.GeoJSON | null>(null),
+    emptyLayer = useRef<Leaflet.GeoJSON | null>(null),
     latest = useRef(props),
     initialDecorative = useRef(props.decorative);
   const [ready, setReady] = useState(false),
@@ -390,7 +394,7 @@ export default function WorldMap(props: Props) {
             color: selected ? "#ffdd00" : "#171714",
             weight: selected ? 1.7 : 0.7,
             fillColor: n.color,
-            fillOpacity: props.decorative ? 0.55 : selected ? 0.93 : 0.82,
+            fillOpacity: props.decorative ? 0.55 : props.highlightedNations && !props.highlightedNations.includes(n.id) ? 0.28 : selected ? 0.93 : 0.82,
           };
         },
         onEachFeature: (f, layer) => {
@@ -487,6 +491,7 @@ export default function WorldMap(props: Props) {
     props.selected,
     props.labels,
     props.decorative,
+    props.highlightedNations,
   ]);
   useEffect(() => {
     if (!ready || !map.current) return;
@@ -537,10 +542,35 @@ export default function WorldMap(props: Props) {
               ((l as Leaflet.Path).getElement() as HTMLElement | null)?.blur();
               latest.current.onSelectRegion?.(f.properties.id);
             });
+            l.on("mouseover", () => latest.current.onHoverRegion?.(f.properties.id));
+            l.on("mouseout", () => latest.current.onHoverRegion?.(null));
           },
         })
         .addTo(map.current);
   }, [ready, worldCopies, props.regions, props.selectedRegion]);
+  useEffect(() => {
+    if (!ready || !map.current || !L.current) return;
+    emptyLayer.current?.remove();
+    if (!props.emptyRegions?.length) return;
+    emptyLayer.current = L.current.geoJSON({
+      type: "FeatureCollection",
+      features: worldCopies.flatMap((copy) => props.emptyRegions!.map((region) => ({
+        type: "Feature" as const,
+        geometry: shiftGeometry(continuousGeometry(region.geometry), copy * 360),
+        properties: { id: region.properties.id, name: region.properties.name },
+      }))),
+    } as FeatureCollection, {
+      pane: "novus-regions", pmIgnore: true,
+      style: { color: "#777", weight: 0.8, fillColor: "#777", fillOpacity: 0.8 },
+      onEachFeature: (f, layer) => {
+        layer.bindTooltip("Unheld land", { className: "country-tooltip", sticky: true });
+        layer.on("click", (event) => {
+          L.current?.DomEvent.stopPropagation(event.originalEvent);
+          latest.current.onSelectRegion?.(f.properties.id);
+        });
+      },
+    }).addTo(map.current);
+  }, [ready, worldCopies, props.emptyRegions]);
   useEffect(() => {
     if (!ready || !map.current || !L.current) return;
     occupationLayer.current?.remove();
@@ -558,8 +588,25 @@ export default function WorldMap(props: Props) {
       pane: "novus-occupations",
       pmIgnore: true,
       interactive: false,
-      style: { color: "#ffdd00", weight: 1.4, dashArray: "5 4", fillColor: "#ffdd00", fillOpacity: 0.22 },
+      style: { color: "#b44f48", weight: 0.8, fillColor: "#b44f48", fillOpacity: 0.13 },
     }).addTo(map.current);
+    occupationLayer.current.eachLayer((layer) => (layer as Leaflet.Path).getElement()?.classList.add("novus-occupied"));
+    const pane = map.current.getPane("novus-occupations");
+    const svg = pane?.querySelector("svg");
+    if (svg && !svg.querySelector("#novus-crosshatch")) {
+      const ns = "http://www.w3.org/2000/svg";
+      const defs = document.createElementNS(ns, "defs");
+      const pattern = document.createElementNS(ns, "pattern");
+      pattern.setAttribute("id", "novus-crosshatch");
+      pattern.setAttribute("patternUnits", "userSpaceOnUse");
+      pattern.setAttribute("width", "8"); pattern.setAttribute("height", "8");
+      const background = document.createElementNS(ns, "rect");
+      background.setAttribute("width", "8"); background.setAttribute("height", "8"); background.setAttribute("fill", "#b44f4830");
+      const lines = document.createElementNS(ns, "path");
+      lines.setAttribute("d", "M0 0L8 8M8 0L0 8");
+      lines.setAttribute("stroke", "#e47b70"); lines.setAttribute("stroke-opacity", "0.75"); lines.setAttribute("stroke-width", "1.4");
+      pattern.appendChild(background); pattern.appendChild(lines); defs.appendChild(pattern); svg.insertBefore(defs, svg.firstChild);
+    }
   }, [ready, worldCopies, props.occupations]);
   useEffect(() => {
     if (!ready || !map.current || !L.current) return;
