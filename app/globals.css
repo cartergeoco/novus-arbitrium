@@ -2008,7 +2008,7 @@ kbd,
     gap: 2px;
   }
   .chronicle-panel,
-  .in-game .nation-panel:has(.nation-tabs) {
+  .in-game .nation-panel:has(.nation-tabs, .region-inspector) {
     display: none;
   }
   .nation-panel.mobile-open,
@@ -2117,7 +2117,7 @@ kbd,
     right: 25px;
     bottom: 40px;
   }
-  .nation-panel:not(:has(.nation-tabs)) {
+  .nation-panel:not(:has(.nation-tabs, .region-inspector)) {
     width: 280px;
     max-height: calc(100% - 95px - var(--map-chrome-shift));
   }
@@ -2273,7 +2273,7 @@ kbd,
   .world-toolbar .subtle-button {
     font-size: 0.65rem;
   }
-  .nation-panel:not(:has(.nation-tabs)) {
+  .nation-panel:not(:has(.nation-tabs, .region-inspector)) {
     width: calc(100% - 36px);
     left: 18px;
     top: calc(65px + var(--map-chrome-shift));

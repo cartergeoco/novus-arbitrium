@@ -25,6 +25,7 @@ import { sealBorder, simplifyRing } from "./geometry";
 import { changeRegion, changeRegionProfile, foundNation, recordTerritorySplit, regionViews, type RegionAtlas, type RegionState, type RegionView } from "./world-regions";
 import { deriveFlag, derivePolity, flagInputSchema, heritageFlag, makeFlag, type FlagSpec } from "./flags";
 import { flagColors } from "./flag";
+import { DEPENDENCIES } from "./dependencies";
 export type { FlagSpec } from "./flags";
 export { flagSchema, makeFlag } from "./flags";
 export type Land = Feature<Polygon | MultiPolygon>;
@@ -60,6 +61,7 @@ export type Nation = {
   dossier?: string;
   geometry: Land["geometry"];
   original: boolean;
+  suzerain?: string;
 };
 export type War = {
   id: string;
@@ -68,6 +70,8 @@ export type War = {
   goal: string;
   started: string;
   status: "active" | "ended";
+  ended?: string;
+  outcome?: "restored" | "occupied" | "ceded";
 };
 export type Event = {
   id: string;
@@ -95,6 +99,7 @@ export type Campaign = {
   regions?: Record<string, RegionState>;
   removedRegions?: string[];
   wars?: War[];
+  firestorm?: true;
 };
 export { defaults, type Settings } from "./settings";
 const palette = [
@@ -162,7 +167,7 @@ export function createCampaign(
   }
   applyAlignments(nations);
   const now = new Date().toISOString();
-  return {
+  return absorbDependencies({
     version: 1,
     id: crypto.randomUUID(),
     name: name.trim() || "A new world order",
@@ -188,7 +193,31 @@ export function createCampaign(
     regions: {},
     removedRegions: [],
     wars: [],
-  };
+  });
+}
+
+/** One-way, in-memory upgrade of old saves. Region IDs and the version-1 save contract survive. */
+export function absorbDependencies(c: Campaign): Campaign {
+  if (c.firestorm) return c;
+  const nations = structuredClone(c.nations);
+  const regions = structuredClone(c.regions || {});
+  for (const [id, parentId] of Object.entries(DEPENDENCIES)) {
+    const holding = nations[id], parent = nations[parentId];
+    if (!holding || !parent || c.player === id || holding.suzerain) continue;
+    try {
+      const land = union(featureCollection([feature(parent.geometry), feature(holding.geometry)]));
+      if (!land) continue;
+      parent.geometry = sealBorder(land.geometry);
+      parent.population += holding.population;
+      parent.gdp += holding.gdp;
+      delete nations[id];
+      for (const state of Object.values(regions)) {
+        if (state.owner === id) state.owner = parentId;
+        if (state.controller === id) state.controller = parentId;
+      }
+    } catch { /* Keep unusual user-edited geometry intact. */ }
+  }
+  return { ...c, nations, regions, firestorm: true };
 }
 const point = z.tuple([
   z.number().min(-180).max(180),
@@ -222,6 +251,7 @@ export const turnSchema = z.object({
         claimsAdd: z.array(z.string().max(80)).max(8).optional(),
         claimsRemove: z.array(z.string().max(80)).max(8).optional(),
         flag: flagInputSchema.optional(),
+        suzerain: z.string().max(40).nullable().optional(),
       }),
     )
     .max(12),
@@ -244,9 +274,10 @@ export const turnSchema = z.object({
     .default([]),
   regionActions: z.array(z.object({
     region: z.string().max(80),
-    mode: z.enum(["occupy", "liberate", "cede"]),
+    mode: z.enum(["occupy", "liberate", "cede", "abandon"]),
     actor: z.string().max(40),
     reason: z.string().max(240),
+    type: z.enum(["State", "Province", "Territory", "Commonwealth"]).optional(),
   })).max(8).default([]),
   regionEffects: z.array(z.object({
     region: z.string().max(80),
@@ -254,6 +285,7 @@ export const turnSchema = z.object({
     damage: z.number().min(-20).max(20).default(0),
     identity: z.string().max(100).optional(),
     politicalClimate: z.string().max(100).optional(),
+    type: z.enum(["State", "Province", "Territory", "Commonwealth"]).optional(),
     cause: z.string().max(240),
   })).max(12).default([]),
   conflicts: z.array(z.object({
@@ -273,6 +305,7 @@ export const turnSchema = z.object({
     flag: flagInputSchema.optional(),
     cause: z.string().max(500).optional(),
     civilWar: z.boolean().default(false),
+    suzerain: z.string().max(40).optional(),
   })).max(2).default([]),
 });
 export type TurnResult = z.infer<typeof turnSchema>;
@@ -427,6 +460,11 @@ export function applyTurn(
         n.original = false;
       }
     }
+    if (effect.suzerain !== undefined && (!effect.suzerain || (nations[effect.suzerain] && effect.suzerain !== n.id))) {
+      if (effect.suzerain) n.suzerain = effect.suzerain;
+      else delete n.suzerain;
+      changes.push(`${n.name}: ${effect.suzerain ? `subsidiary of ${nations[effect.suzerain].name}` : "independent"}`);
+    }
   }
   const politicalEvents: { title: string; body: string }[] = [];
   for (const op of result.territories) {
@@ -446,7 +484,7 @@ export function applyTurn(
     if (atlas) {
       const recipient = op.target || Object.keys(nations).find((id) => !before[id]);
       if (recipient) {
-        regional = { ...regional, nations, ...recordTerritorySplit(regional, atlas, op.source, recipient, op.ring) };
+        regional = { ...regional, nations, ...recordTerritorySplit(regional, atlas, op.source, recipient, op.ring, !nations[op.source]) };
       }
     }
     changes.push(
@@ -481,13 +519,10 @@ export function applyTurn(
       (w.attackers.includes(conflict.attacker) && w.defenders.includes(conflict.defender)) ||
       (w.attackers.includes(conflict.defender) && w.defenders.includes(conflict.attacker))
     ));
-    if (conflict.action === "start" && !existing) {
-      wars.push({ id: crypto.randomUUID(), attackers: [conflict.attacker], defenders: [conflict.defender], goal: conflict.goal, started: c.date, status: "active" });
+    if (conflict.action === "start" && !existing && !nations[conflict.attacker].suzerain) {
+      const suzerain = nations[conflict.defender].suzerain;
+      wars.push({ id: crypto.randomUUID(), attackers: [conflict.attacker], defenders: [conflict.defender, ...(suzerain && nations[suzerain] ? [suzerain] : [])], goal: conflict.goal, started: c.date, status: "active" });
       changes.push(`${nations[conflict.attacker].name} and ${nations[conflict.defender].name}: war began`);
-    }
-    if (conflict.action === "end" && existing) {
-      existing.status = "ended";
-      changes.push(`${nations[conflict.attacker].name} and ${nations[conflict.defender].name}: war ended`);
     }
   }
   for (const op of result.regionActions) {
@@ -496,7 +531,7 @@ export function applyTurn(
     const owner = regional.regions?.[op.region]?.owner || region?.properties.country;
     if (owner) touched.add(owner);
     touched.add(op.actor);
-    regional = changeRegion(regional, atlas, op.region, op.mode, op.actor);
+    regional = changeRegion(regional, atlas, op.region, op.mode, op.actor, op.type);
     changes.push(`${op.region}: ${op.mode} by ${regional.nations[op.actor]?.name || op.actor}`);
   }
   nations = regional.nations;
@@ -504,6 +539,50 @@ export function applyTurn(
   date.setUTCDate(date.getUTCDate() + settings.turnDays);
   const day = date.toISOString().slice(0, 10),
     turn = c.turn + 1;
+  for (const conflict of result.conflicts.filter((item) => item.action === "end")) {
+    const existing = wars.find((w) => w.status === "active" && (c.wars || []).some((prior) => prior.id === w.id && prior.status === "active") && (
+      (w.attackers.includes(conflict.attacker) && w.defenders.includes(conflict.defender)) ||
+      (w.attackers.includes(conflict.defender) && w.defenders.includes(conflict.attacker))
+    ));
+    if (!existing) continue;
+    const sides = new Set([...existing.attackers, ...existing.defenders]);
+    const disputed = atlas ? regionViews(regional, atlas).filter((r) => sides.has(r.state.owner) || sides.has(r.state.controller) || sides.has(r.properties.country)) : [];
+    const ceded = disputed.some((r) => sides.has(r.properties.country) && sides.has(r.state.owner) && r.state.owner !== r.properties.country);
+    const occupied = disputed.some((r) => r.state.owner && r.state.controller && r.state.owner !== r.state.controller);
+    existing.status = "ended";
+    existing.ended = day;
+    existing.outcome = ceded ? "ceded" : occupied ? "occupied" : "restored";
+    for (const region of disputed.filter((r) => r.state.politicalClimate === "Civil war")) {
+      const stillFighting = wars.some((w) => w.status === "active" && [...w.attackers, ...w.defenders].includes(region.state.controller));
+      if (!stillFighting) regional.regions = { ...(regional.regions || {}), [region.properties.id]: { ...region.state, politicalClimate: "Postwar recovery" } };
+    }
+    changes.push(`${nations[conflict.attacker]?.name || conflict.attacker} and ${nations[conflict.defender]?.name || conflict.defender}: war ended; ${existing.outcome}`);
+  }
+  if (atlas) {
+    const pressure = new Map<string, number>();
+    const states = new Map<string, number>();
+    for (const region of regionViews(regional, atlas)) {
+      const previous = c.regions?.[region.properties.id];
+      if (!previous || !previous.owner || !previous.controller || (previous.owner === previous.controller && previous.politicalClimate !== "Civil war")) continue;
+      const active = wars.some((w) => w.status === "active" && [...w.attackers, ...w.defenders].includes(previous.controller));
+      if (!active) continue;
+      const step = Math.max(1, Math.min(4, Math.ceil(settings.turnDays / 14)));
+      regional.regions = { ...(regional.regions || {}), [region.properties.id]: {
+        ...region.state,
+        unrest: clamp(region.state.unrest + step * 2),
+        damage: clamp(region.state.damage + step),
+        politicalClimate: previous.politicalClimate === "Civil war" ? "Civil war" : "Occupation",
+      } };
+      pressure.set(previous.controller, (pressure.get(previous.controller) || 0) + 1);
+      if (region.properties.type.toLowerCase().includes("state")) states.set(previous.owner, (states.get(previous.owner) || 0) + 1);
+    }
+    for (const [id, count] of pressure) if (nations[id]) {
+      nations[id].economy = clamp(nations[id].economy - Math.min(5, Math.ceil(count / 4)));
+      nations[id].stability = clamp(nations[id].stability - Math.min(4, Math.ceil(count / 6)));
+      changes.push(`${nations[id].name}: occupation strains economy and stability`);
+    }
+    for (const [id, count] of states) if (nations[id]) nations[id].stability = clamp(nations[id].stability - Math.min(4, count));
+  }
   if (settings.turnDays >= 7) {
     for (const war of wars.filter((w) => w.status === "active")) {
       for (const id of [...war.attackers, ...war.defenders]) {
@@ -759,7 +838,7 @@ export function compactContext(
       flagColors: flagColors(flag).slice(0, 5),
       bounds: bbox(feature(geometry)),
     })),
-    regions: relevant.map((r) => ({ id: r.properties.id, name: r.properties.name, type: r.properties.type, owner: r.state.owner, controller: r.state.controller, unrest: r.state.unrest, damage: r.state.damage, identity: r.state.identity, politicalClimate: r.state.politicalClimate })),
+    regions: relevant.map((r) => ({ id: r.properties.id, name: r.properties.name, type: r.state.owner || r.state.controller ? r.state.type || r.properties.type : "Unheld", owner: r.state.owner, controller: r.state.controller, ...(r.state.owner || r.state.controller ? { unrest: r.state.unrest, damage: r.state.damage, identity: r.state.identity, politicalClimate: r.state.politicalClimate } : {}) })),
     activeWars: (c.wars || []).filter((w) => w.status === "active"),
     recent: [...c.history.slice(0, 5), ...recalled].filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i).slice(0, 10)
       .map((e) => ({ date: e.date, title: e.title, body: e.body.slice(0, 600) })),

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSettings } from "@/hooks/use-settings";
 import { useApiKey } from "@/hooks/use-api-key";
 import { useProviderConnection } from "@/hooks/use-provider-connection";
+import { providerLabels } from "@/lib/settings";
 import { ensureBrowserCheck } from "@/lib/browser-check-client";
 import { IconButton } from "@/components/IconButton";
 import dynamic from "next/dynamic";
@@ -70,7 +71,8 @@ import {
   number,
   type Campaign,
 } from "@/lib/game";
-import { recordTerritorySplit, regionViews, type RegionAtlas } from "@/lib/world-regions";
+import { recordTerritorySplit, regionType, regionViews, type RegionAtlas } from "@/lib/world-regions";
+import { RegionInspector } from "./RegionInspector";
 import AccountMenu from "@/components/AccountMenu";
 import { campaigns, currentAccount, deleteCampaign, saveCampaign, subscribeAccount } from "@/lib/saves";
 import { factions } from "@/lib/alignments";
@@ -134,6 +136,10 @@ export default function Game({
     [creating, setCreating] = useState(launchMode === "new"),
     [selected, setSelected] = useState("USA"),
     [selectedRegion, setSelectedRegion] = useState<string | null>(null),
+    [nationTab, setNationTab] = useState<"overview" | "regions">("overview"),
+    [hoveredRegion, setHoveredRegion] = useState<string | null>(null),
+    [mapFilter, setMapFilter] = useState<"all" | "occupied" | "own" | "wars">("all"),
+    [regionFlags, setRegionFlags] = useState<Record<string, string>>({}),
     [settingsOpen, setSettingsOpen] = useState(false),
     [profileOpen, setProfileOpen] = useState(false),
     [query, setQuery] = useState(""),
@@ -174,6 +180,7 @@ export default function Game({
         if (!r.ok) throw Error("The regional atlas could not load.");
         return r.json() as Promise<RegionAtlas>;
       }),
+      fetch("/data/region-flags.json").then((r) => r.ok ? r.json() as Promise<{ flags: Record<string, string> }> : { flags: {} }),
     ]).then((results) => {
       if (!live) return;
       if (results[0].status === "fulfilled") setWorld(results[0].value);
@@ -185,6 +192,7 @@ export default function Game({
         );
       if (results[2].status === "fulfilled") setAtlas(results[2].value);
       else toast.error("Regional atlas unavailable. Reload to play with dynamic borders.");
+      if (results[3].status === "fulfilled") setRegionFlags(results[3].value.flags);
       setLoading(false);
     });
     return () => {
@@ -223,6 +231,28 @@ export default function Game({
     return groups;
   }, [campaign]);
   const allRegions = useMemo(() => current && atlas ? regionViews(current, atlas) : [], [current, atlas]);
+  const activeWars = useMemo(() => (campaign?.wars || []).filter((w) => w.status === "active"), [campaign?.wars]);
+  const warNations = useMemo(() => new Set(activeWars.flatMap((w) => [...w.attackers, ...w.defenders])), [activeWars]);
+  const selectedRegionView = allRegions.find((r) => r.properties.id === selectedRegion);
+  const visibleMapRegions = useMemo(() => allRegions.filter((r) => mapFilter === "all" ? r.state.owner === selected
+    : mapFilter === "occupied" ? !!r.state.owner && r.state.controller !== r.state.owner
+    : mapFilter === "own" ? r.state.owner === campaign?.player
+    : warNations.has(r.state.owner) || warNations.has(r.state.controller)), [allRegions, mapFilter, selected, campaign?.player, warNations]);
+  const visibleOccupations = useMemo(() => allRegions.filter((r) => (r.state.owner && r.state.controller !== r.state.owner) || r.state.politicalClimate === "Civil war")
+    .filter((r) => mapFilter === "all" || mapFilter === "occupied" || (mapFilter === "own" ? r.state.owner === campaign?.player : warNations.has(r.state.owner) || warNations.has(r.state.controller))), [allRegions, mapFilter, campaign?.player, warNations]);
+  const emptyRegions = useMemo(() => allRegions.filter((r) => !r.state.owner && !r.state.controller), [allRegions]);
+  const highlightedNations = useMemo(() => mapFilter === "all" ? undefined : mapFilter === "own" ? [campaign?.player || ""]
+    : mapFilter === "wars" ? [...warNations]
+    : [...new Set(visibleOccupations.flatMap((r) => [r.state.owner, r.state.controller]))], [mapFilter, campaign?.player, warNations, visibleOccupations]);
+  const occupiedRegionIds = useMemo(() => allRegions.filter((r) => r.state.controller !== r.state.owner && !!r.state.controller).flatMap((r) => [r.properties.id.toLowerCase(), ...(r.properties.name.length > 3 ? [r.properties.name.toLowerCase()] : [])]), [allRegions]);
+  const ownRegionIds = useMemo(() => allRegions.filter((r) => r.state.owner === campaign?.player).flatMap((r) => [r.properties.id.toLowerCase(), ...(r.properties.name.length > 3 ? [r.properties.name.toLowerCase()] : [])]), [allRegions, campaign?.player]);
+  const filteredChronicleTurns = chronicleTurns.map((group) => ({ ...group, events: group.events.filter((event) => {
+    if (mapFilter === "all") return true;
+    const text = `${event.title} ${event.body} ${event.action || ""} ${(event.changes || []).join(" ")}`.toLowerCase();
+    if (mapFilter === "occupied") return occupiedRegionIds.some((id) => text.includes(id));
+    if (mapFilter === "own") return text.includes((campaign?.nations[campaign.player]?.name || "").toLowerCase()) || ownRegionIds.some((id) => text.includes(id));
+    return activeWars.some((w) => [...w.attackers, ...w.defenders].some((id) => text.includes((nations[id]?.name || id).toLowerCase())));
+  }) })).filter((group) => group.events.length);
   const rankedNations = useMemo(() => {
     const list = Object.values(nations);
     const maxPop = Math.max(1, ...list.map((n) => Math.log10(Math.max(1, n.population))));
@@ -252,12 +282,13 @@ export default function Game({
     present: faction.members.filter((id) => nations[id]).map((id) => nations[id]),
   })).filter((faction) => faction.present.length > 1), [nations]);
   const ownedRegions = useMemo(() => allRegions.filter((r) => r.state.owner === selected), [allRegions, selected]);
+  useEffect(() => { if (panelRef.current) panelRef.current.scrollTop = 0; }, [selected, selectedRegion]);
   const inspectedRegionFeatures = useMemo<FeatureCollection>(() => ({
-    type: "FeatureCollection", features: ownedRegions.map((r) => ({
+    type: "FeatureCollection", features: visibleMapRegions.map((r) => ({
       type: "Feature" as const, geometry: r.geometry,
       properties: { ...r.properties, country: r.state.owner, controller: r.state.controller, unrest: r.state.unrest, damage: r.state.damage },
     })),
-  }), [ownedRegions]);
+  }), [visibleMapRegions]);
   useEffect(() => {
     onPlayingChange?.(!creating);
     return () => onPlayingChange?.(false);
@@ -310,6 +341,7 @@ export default function Game({
     if (busy || drawing || ring) return;
     setSelected(id);
     setSelectedRegion(null);
+    setNationTab("overview");
   };
   const start = () => {
     if (!world || !atlas) return;
@@ -371,7 +403,7 @@ export default function Game({
     setBusy(true);
     let receivedTokens = 0;
     try {
-      if (settings.provider !== "ollama" && !apiKey)
+      if (!apiKey)
         throw Error("Add an API key and model in Settings → API first.");
       if (!settings.model.trim())
         throw Error("Add a model in Settings → API first.");
@@ -475,7 +507,7 @@ export default function Game({
         ? Object.keys(ns).find((id) => !campaign.nations[id])
         : territoryTarget;
       const regional = atlas && recipient
-        ? recordTerritorySplit(campaign, atlas, selected, recipient, ring)
+        ? recordTerritorySplit(campaign, atlas, selected, recipient, ring, !ns[selected])
         : {};
       const next = {
         ...campaign,
@@ -728,7 +760,7 @@ export default function Game({
             <span>NOVUS ARBITRIUM</span>
             <span>A world of consequence.</span>
             <button onClick={() => { setProfileOpen(false); setSettingsOpen(true); }}>
-              Alpha 0.1 · Help & credits <ArrowUpRight />
+              Firestorm v2.0 · Help & credits <ArrowUpRight />
             </button>
           </footer>
         </div>
@@ -746,13 +778,17 @@ export default function Game({
               setDrawing(false);
             }}
             regions={inspectedRegionFeatures}
-            occupations={allRegions.filter((r) => r.state.controller !== r.state.owner)}
+            occupations={visibleOccupations}
+            emptyRegions={emptyRegions}
+            highlightedNations={highlightedNations}
+            onHoverRegion={setHoveredRegion}
             selectedRegion={selectedRegion}
             focusRegion={allRegions.find((r) => r.properties.id === selectedRegion) || null}
             onSelectRegion={(id) => {
               const region = allRegions.find((item) => item.properties.id === id);
-              if (region) setSelected(region.state.owner);
+              if (region?.state.owner) setSelected(region.state.owner);
               setSelectedRegion(id);
+              setMobilePanel("nation");
             }}
             focus={focus}
             motion={settings.motion}
@@ -816,6 +852,16 @@ export default function Game({
             )}
             {nation && !creating && (
               <div className="nation-details">
+                {campaign && selectedRegionView ? (
+                  <RegionInspector
+                    campaign={campaign}
+                    region={selectedRegionView}
+                    flag={regionFlags[selectedRegionView.properties.id.split("~")[0]]}
+                    fallbackNation={nation}
+                    onBack={(nationId) => { setSelected(nationId); setSelectedRegion(null); }}
+                    onClose={() => setMobilePanel(null)}
+                  />
+                ) : <>
                 <div className="nation-title docked">
                   <Flag
                     spec={nation.flag}
@@ -840,7 +886,7 @@ export default function Game({
                   </button>
                 </div>
                 {!creating && (
-                  <Tabs defaultValue="overview" className="nation-tabs">
+                  <Tabs value={nationTab} onValueChange={(value) => setNationTab(value as "overview" | "regions")} className="nation-tabs">
                     <TabsList variant="line">
                       <TabsTrigger value="overview">Overview</TabsTrigger>
                       <TabsTrigger value="regions">Regions</TabsTrigger>
@@ -853,12 +899,16 @@ export default function Game({
                         <p>{nation.goal}</p>
                         {nation.government && nation.government !== "Unspecified" && <><span className="eyebrow">GOVERNMENT</span><p>{nation.government}</p></>}
                         {nation.leader && nation.leader !== "Unspecified" && <><span className="eyebrow">LEADERSHIP</span><p>{nation.leader}</p></>}
+                        {nation.suzerain && nations[nation.suzerain] && <><span className="eyebrow">SUZERAIN</span><p>{nations[nation.suzerain].name}</p></>}
+                        {Object.values(nations).some((n) => n.suzerain === nation.id) && <><span className="eyebrow">SUBSIDIARIES</span><p>{Object.values(nations).filter((n) => n.suzerain === nation.id).map((n) => n.name).join(", ")}</p></>}
                       </div>
+                      {ownedRegions.some((r) => r.state.controller !== r.state.owner) && <div className="occupied-overview" aria-label="Occupied regions">{ownedRegions.filter((r) => r.state.controller !== r.state.owner).map((r) => <button key={r.properties.id} type="button" className={hoveredRegion === r.properties.id ? "hovered" : ""} onClick={() => setSelectedRegion(r.properties.id)}>{regionFlags[r.properties.id.split("~")[0]] && <img src={regionFlags[r.properties.id.split("~")[0]]} alt="" loading="eager" decoding="async" />}<span>{r.properties.name}</span><span className="occupation-corner">OCCUPIED</span></button>)}</div>}
                       {(campaign?.wars || []).filter((w) => w.status === "active" && (w.attackers.includes(selected) || w.defenders.includes(selected))).map((w) => (
                         <div className="conflict-card" key={w.id}>
                           <span>ACTIVE CONFLICT</span>
                           <strong>{[...w.attackers, ...w.defenders].filter((id) => id !== selected).map((id) => nations[id]?.name || id).join(", ")}</strong>
                           <small>{w.goal}</small>
+                          <small>Started {formatDate(w.started)}</small>
                         </div>
                       ))}
                       <div className="metrics">
@@ -938,14 +988,17 @@ export default function Game({
                       <div className="nation-results region-list">
                         {ownedRegions.map((r) => (
                           <button key={r.properties.id} type="button" className={selectedRegion === r.properties.id ? "active" : ""} aria-pressed={selectedRegion === r.properties.id} onClick={() => setSelectedRegion(r.properties.id)}>
+                            {regionFlags[r.properties.id.split("~")[0]] && <img className="region-list-flag" src={regionFlags[r.properties.id.split("~")[0]]} alt="" loading="eager" decoding="async" />}
                             <span>{r.properties.name}</span>
-                            <small>{r.state.controller !== r.state.owner ? `Occupied by ${nations[r.state.controller]?.name || r.state.controller}` : r.properties.type}</small>
+                            <small>{regionType(r)}</small>
+                            {r.state.controller !== r.state.owner && <span className="occupation-corner">OCCUPIED</span>}
                           </button>
                         ))}
                       </div>
                     </TabsContent>
                   </Tabs>
                 )}
+                </>}
               </div>
             )}
             {creating && (
@@ -998,6 +1051,7 @@ export default function Game({
                   <span className="entry-count">{sideView === "chronicle" ? chronicleTurns.length : sideView === "factions" ? visibleFactions.length : rankedNations.length}</span>
                 </div>
                 <div className="chronicle-scroll">
+                  {sideView === "chronicle" && <label className="firestorm-filter">Map & timeline <select aria-label="Filter map and timeline" value={mapFilter} onChange={(e) => setMapFilter(e.target.value as typeof mapFilter)}><option value="all">All land</option><option value="occupied">Occupied land</option><option value="own">My regions</option><option value="wars">Active wars</option></select></label>}
                   {sideView === "nations" && (
                     <label className="nation-sort">
                       <span className="sr-only">Sort nations</span>
@@ -1019,9 +1073,10 @@ export default function Game({
                       <span>The world is responding…</span>
                     </div>
                   )}
-                  {sideView === "chronicle" && chronicleTurns.map((group, i) => (
+                  {sideView === "chronicle" && filteredChronicleTurns.map((group, i) => (
                     <ChronicleTurn key={group.turn} group={group} latest={i === 0} />
                   ))}
+                  {sideView === "chronicle" && !filteredChronicleTurns.length && <p className="hint" style={{ padding: "12px" }}>No timeline events match this map filter.</p>}
                   {sideView === "factions" && visibleFactions.map((faction) => (
                     <article className="chronicle-event" key={faction.id}>
                       <div className="event-meta">
@@ -1176,7 +1231,7 @@ export default function Game({
                   <div className="decision-context">
                     <span className="decision-provider" data-link={link} title={connection.message}>
                       <Lightning weight="fill" />
-                      {settings.provider === "openai" ? "OpenAI" : settings.provider === "openrouter" ? "OpenRouter" : "Ollama"}
+                      {providerLabels[settings.provider]}
                     </span>
                     <span className="decision-turn">Turn {campaign.turn}</span>
                     <span className="decision-date">{formatDate(campaign.date)}</span>
@@ -1267,7 +1322,7 @@ export default function Game({
       {identity && player && (
         <IdentityEditor
           nation={player}
-          ai={settings.model.trim() && (settings.provider === "ollama" || apiKey) ? {
+          ai={settings.model.trim() && apiKey ? {
             provider: settings.provider,
             key: apiKey || undefined,
             model: settings.model,
